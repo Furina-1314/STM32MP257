@@ -20,7 +20,7 @@ cmake .. && make -j$(nproc)
 ```bash
 ./rgb_1080p
 ```
-将开发板上生成的stream_1080p.sdp拷至主机后，在主机运行：
+将开发板上生成的`stream_1080p.sdp`拷至主机后，在主机运行：
 ```bash
 vlc --network-caching=100 stream_1080p.sdp
 ```
@@ -32,7 +32,7 @@ vlc --network-caching=100 stream_1080p.sdp
 ```bash
 ./rgb_720p
 ```
-将开发板上生成的stream_1080p.sdp拷至主机后，在主机运行：
+将开发板上生成的`stream_720p.sdp`拷至主机后，在主机运行：
 ```bash
 vlc --network-caching=100 stream_720p.sdp
 ```
