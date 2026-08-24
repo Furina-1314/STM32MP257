@@ -38,4 +38,4 @@ vlc --network-caching=100 stream_720p.sdp
 ```
 `--network-caching=100`将缓存设置为100ms，可根据情况调整。
 
-`stream_1080p.sdp`文件的路径根据拷贝的位置做调整。
+`stream_720p.sdp`文件的路径根据拷贝的位置做调整。
