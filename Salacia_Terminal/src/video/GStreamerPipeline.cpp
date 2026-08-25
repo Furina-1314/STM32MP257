@@ -75,14 +75,16 @@ void GStreamerPipeline::stop()
     }
 }
 
-QString GStreamerPipeline::resolveDecoderChain() const
+QString GStreamerPipeline::resolveDecoderChain()
 {
     // 硬解优先（D3D11 需要 d3d11download 转系统内存），失败回退软解
     if (preferredDecoder_ == QStringLiteral("d3d11h264dec")
         && gst_element_factory_find("d3d11h264dec") != nullptr
         && gst_element_factory_find("d3d11download") != nullptr) {
-        return QStringLiteral("d3d11h264dec ! d3d11download");
+        usingD3d11_ = true; // tee 前保持 D3D11 显存，缩放/转换尽量在 GPU 完成
+        return QStringLiteral("d3d11h264dec ! d3d11upload");
     }
+    usingD3d11_ = false;
     if (gst_element_factory_find(preferredDecoder_.toUtf8().constData()) != nullptr) {
         return preferredDecoder_;
     }
@@ -113,15 +115,23 @@ bool GStreamerPipeline::buildAndPlay()
           << QString::fromLatin1("rtph264depay ! h264parse")
           << QString::fromLatin1("%1 ! tee name=t").arg(decoder)
           // 显示分支：BGRA 供 Qt Quick 渲染
-          << QString::fromLatin1("t. ! queue leaky=downstream max-size-buffers=2 "
+          << QString::fromLatin1("t. ! queue leaky=downstream max-size-buffers=2 %1"
                                  "! videoconvert ! video/x-raw,format=BGRA "
-                                 "! appsink name=displaysink sync=false max-buffers=1 drop=true");
+                                 "! appsink name=displaysink sync=false max-buffers=1 drop=true")
+                 .arg(usingD3d11_ ? QString::fromLatin1("! d3d11download ") : QString());
     if (aiEnabled_) {
-        // AI 分支：tee 后在管线内完成缩放与色彩转换，输出对齐模型输入
-        parts << QString::fromLatin1("t. ! queue leaky=downstream max-size-buffers=2 "
-                                     "! videoscale ! videoconvert "
-                                     "! video/x-raw,format=RGB,width=%1,height=%2 "
+        // AI 分支（红线：缩放在 GPU 完成）——D3D11 路径用 d3d11convert 显存内
+        // 缩放+转 RGBA 后下载，CPU 仅做 640x6640 小图重排；软解回退用 videoscale
+        const QString aiConvert = usingD3d11_
+                ? QString::fromLatin1("! d3d11convert "
+                                      "! video/x-raw(memory:D3D11Memory),format=RGBA,width=%1,height=%2 "
+                                      "! d3d11download ! videoconvert ")
+                      .arg(aiWidth_).arg(aiHeight_)
+                : QString::fromLatin1("! videoscale ! videoconvert ");
+        parts << QString::fromLatin1("t. ! queue leaky=downstream max-size-buffers=2 %1"
+                                     "! video/x-raw,format=RGB,width=%2,height=%3 "
                                      "! appsink name=aisink sync=false max-buffers=1 drop=true")
+                     .arg(aiConvert)
                      .arg(aiWidth_)
                      .arg(aiHeight_);
     }

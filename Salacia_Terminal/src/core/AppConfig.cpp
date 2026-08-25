@@ -105,6 +105,8 @@ bool AppConfig::load(const QString& explicitPath)
     inputHeight_ = boundedInt(ini, "ai/input_height", inputHeight_, 16, 8192);
     confidenceThreshold_ = boundedDouble(ini, "ai/confidence_threshold",
                                          confidenceThreshold_, 0.0, 1.0);
+    nmsIouThreshold_ = static_cast<float>(boundedDouble(ini, "ai/nms_iou_threshold",
+                                                       nmsIouThreshold_, 0.0, 1.0));
     executionProvider_ = ini.value(QStringLiteral("ai/execution_provider"),
                                    executionProvider_).toString().toLower();
 

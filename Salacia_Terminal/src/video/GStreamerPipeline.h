@@ -68,7 +68,7 @@ private:
     void scheduleRestart(int delayMs);
     void handleBusMessage(GstMessage* msg); // 主线程执行
     void onWatchdog();                       // 主线程 500ms
-    QString resolveDecoderChain() const;     // 首选硬解 -> 软解回退
+    QString resolveDecoderChain();           // 首选硬解 -> 软解回退（记录是否 D3D11 路径）
 
     static GstFlowReturn onDisplaySample(GstAppSink* sink, gpointer self);
     static GstFlowReturn onAiSample(GstAppSink* sink, gpointer self);
@@ -85,6 +85,7 @@ private:
     int aiWidth_ = 640;
     int aiHeight_ = 640;
     bool aiEnabled_ = false;
+    bool usingD3d11_ = false; // 解码链是否走 D3D11 显存路径
 
     // 第三方 C 库边界（GStreamer 引用计数对象，stop() 统一释放）
     GstElement* pipeline_ = nullptr;

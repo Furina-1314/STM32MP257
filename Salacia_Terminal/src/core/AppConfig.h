@@ -41,6 +41,7 @@ public:
     int inputWidth() const { return inputWidth_; }
     int inputHeight() const { return inputHeight_; }
     double confidenceThreshold() const { return confidenceThreshold_; }
+    float nmsIouThreshold() const { return nmsIouThreshold_; }
     QString executionProvider() const { return executionProvider_; }
 
     // ---- [rov] ----
@@ -69,6 +70,7 @@ private:
     int inputWidth_ = 640;
     int inputHeight_ = 640;
     double confidenceThreshold_ = 0.5;
+    float nmsIouThreshold_ = 0.45F;
     QString executionProvider_ = QStringLiteral("auto");
 
     quint16 telemetryPort_ = 5001;
