@@ -171,6 +171,11 @@ set(PROJECT_SOURCES
     src/recognition/IModelInfer.h
     src/recognition/OnnxInferEngine.h
     src/recognition/OnnxInferEngine.cpp
+    src/communication/TelemetryPacket.h
+    src/communication/UdpReceiver.h
+    src/communication/UdpReceiver.cpp
+    src/sensor/MPU6500Processor.h
+    src/sensor/MPU6500Processor.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
@@ -196,6 +201,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Widgets
     Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
     Qt6::OpenGL Qt6::OpenGLWidgets                    # Phase 3：视频显示
+    Qt6::Network                                      # Phase 5：UDP 遥测
     Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
     Ort::OnnxRuntime                     # Phase 4：AI 异构推理
     # Phase 4 接入：Ort::OnnxRuntime

@@ -42,6 +42,8 @@ public:
     int inputHeight() const { return inputHeight_; }
     double confidenceThreshold() const { return confidenceThreshold_; }
     float nmsIouThreshold() const { return nmsIouThreshold_; }
+    float mahonyKp() const { return mahonyKp_; }
+    float mahonyKi() const { return mahonyKi_; }
     QString executionProvider() const { return executionProvider_; }
 
     // ---- [rov] ----
@@ -71,6 +73,8 @@ private:
     int inputHeight_ = 640;
     double confidenceThreshold_ = 0.5;
     float nmsIouThreshold_ = 0.45F;
+    float mahonyKp_ = 0.5F;
+    float mahonyKi_ = 0.0F;
     QString executionProvider_ = QStringLiteral("auto");
 
     quint16 telemetryPort_ = 5001;

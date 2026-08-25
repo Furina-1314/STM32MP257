@@ -107,6 +107,8 @@ bool AppConfig::load(const QString& explicitPath)
                                          confidenceThreshold_, 0.0, 1.0);
     nmsIouThreshold_ = static_cast<float>(boundedDouble(ini, "ai/nms_iou_threshold",
                                                        nmsIouThreshold_, 0.0, 1.0));
+    mahonyKp_ = static_cast<float>(boundedDouble(ini, "imu/mahony_kp", mahonyKp_, 0.0, 10.0));
+    mahonyKi_ = static_cast<float>(boundedDouble(ini, "imu/mahony_ki", mahonyKi_, 0.0, 10.0));
     executionProvider_ = ini.value(QStringLiteral("ai/execution_provider"),
                                    executionProvider_).toString().toLower();
 
