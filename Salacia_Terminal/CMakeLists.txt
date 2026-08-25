@@ -176,9 +176,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
+    Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
     # Phase 3 接入：Gst::GStreamer Gst::App Gst::Video Gst::GL Gst::Rtp
     # Phase 4 接入：Ort::OnnxRuntime
-    # Phase 5 接入：Qt6::Quick Qt6::Quick3D Qt6::Network
+    # Phase 5 接入：Qt6::Quick3D Qt6::Network
     # Phase 6 接入：Qt6::Concurrent + libssh
 )
 

@@ -117,24 +117,28 @@ bool AppConfig::load(const QString& explicitPath)
     sshUser_ = ini.value(QStringLiteral("rov/ssh_user"), sshUser_).toString();
 
     loaded_ = true;
-
-    if (Logger::isInitialized()) {
-        Logger::info(QString::fromLocal8Bit("AppConfig: 已加载 %1（视频端口 %2，抖动缓冲 %3ms，解码器 %4，AI=%5 [%6 %7x%8 阈值%9]，遥测端口 %10，SSH %11:%12@%13）")
-                         .arg(path)
-                         .arg(videoRtpPort_)
-                         .arg(jitterLatencyMs_)
-                         .arg(preferredDecoder_)
-                         .arg(aiEnabled_ ? QStringLiteral("ON") : QStringLiteral("OFF"))
-                         .arg(executionProvider_)
-                         .arg(inputWidth_)
-                         .arg(inputHeight_)
-                         .arg(confidenceThreshold_)
-                         .arg(telemetryPort_)
-                         .arg(sshHost_)
-                         .arg(sshPort_)
-                         .arg(sshUser_));
-    }
     return true;
+}
+
+
+void AppConfig::logSummary() const
+{
+    if (!Logger::isInitialized()) {
+        return;
+    }
+    Logger::info(QString::fromLocal8Bit("AppConfig: 已加载（视频端口 %1，抖动缓冲 %2ms，解码器 %3，AI=%4 [%5 %6x%7 阈值%8]，遥测端口 %9，SSH %10:%11@%12）")
+                     .arg(videoRtpPort_)
+                     .arg(jitterLatencyMs_)
+                     .arg(preferredDecoder_)
+                     .arg(aiEnabled_ ? QStringLiteral("ON") : QStringLiteral("OFF"))
+                     .arg(executionProvider_)
+                     .arg(inputWidth_)
+                     .arg(inputHeight_)
+                     .arg(confidenceThreshold_)
+                     .arg(telemetryPort_)
+                     .arg(sshHost_)
+                     .arg(sshPort_)
+                     .arg(sshUser_));
 }
 
 } // namespace salacia

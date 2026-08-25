@@ -23,6 +23,9 @@ public:
 
     bool loaded() const { return loaded_; }
 
+    // Logger 初始化后由 main 调用：输出已加载配置摘要
+    void logSummary() const;
+
     // ---- [log] ----
     QString logDir() const { return logDir_; }
     QString logLevel() const { return logLevel_; }
