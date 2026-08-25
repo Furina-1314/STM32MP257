@@ -157,6 +157,7 @@ set(PROJECT_SOURCES
     src/Salacia_Terminal.ui
     src/core/Logger.h
     src/core/Logger.cpp
+    src/utils/RingBuffer.h
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
