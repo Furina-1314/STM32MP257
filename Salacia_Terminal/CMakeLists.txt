@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 
 # =============================================================================
 #  Salacia_Terminal —— 水下机器人（ROV）岸上控制终端
@@ -159,6 +159,8 @@ set(PROJECT_SOURCES
     src/core/Logger.cpp
     src/core/AppConfig.h
     src/core/AppConfig.cpp
+    src/core/DataManager.h
+    src/core/DataManager.cpp
     src/utils/RingBuffer.h
 )
 
