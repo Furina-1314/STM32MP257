@@ -6,6 +6,9 @@
 
 #include <cstring>
 #include <utility>
+#include <vector>
+
+#include "core/DataManager.h"
 
 namespace salacia {
 
@@ -21,6 +24,28 @@ constexpr const char* kFragmentShader =
     "uniform sampler2D tex;\n"
     "varying vec2 vUv;\n"
     "void main() { gl_FragColor = texture2D(tex, vUv); }";
+
+// 检测框纯色着色（仅位置属性）
+constexpr const char* kLineVertexShader =
+    "attribute vec2 aPos;\n"
+    "void main() { gl_Position = vec4(aPos, 0.0, 1.0); }";
+
+constexpr const char* kLineFragmentShader =
+    "uniform vec4 uColor;\n"
+    "void main() { gl_FragColor = uColor; }";
+
+// 类别配色表（classId 取模轮转，高亮绿开头）
+constexpr float kPalette[][4] = {
+    {0.20F, 1.00F, 0.20F, 1.0F}, // 绿
+    {0.25F, 0.65F, 1.00F, 1.0F}, // 蓝
+    {1.00F, 0.55F, 0.15F, 1.0F}, // 橙
+    {1.00F, 0.25F, 0.55F, 1.0F}, // 品红
+    {1.00F, 0.95F, 0.20F, 1.0F}, // 黄
+    {0.70F, 0.40F, 1.00F, 1.0F}, // 紫
+    {0.20F, 0.95F, 0.90F, 1.0F}, // 青
+    {1.00F, 1.00F, 1.00F, 1.0F}, // 白
+};
+constexpr int kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
 } // namespace
 
 VideoGLWidget::VideoGLWidget(QWidget* parent)
@@ -46,7 +71,9 @@ VideoGLWidget::~VideoGLWidget()
         textureId_ = 0;
     }
     program_.reset();
+    lineProgram_.reset();
     vertexBuffer_.reset();
+    lineBuffer_.reset();
     doneCurrent();
 }
 
@@ -64,6 +91,11 @@ void VideoGLWidget::initializeGL()
     program_->addShaderFromSourceCode(QOpenGLShader::Fragment, kFragmentShader);
     program_->link();
 
+    lineProgram_ = std::make_unique<QOpenGLShaderProgram>();
+    lineProgram_->addShaderFromSourceCode(QOpenGLShader::Vertex, kLineVertexShader);
+    lineProgram_->addShaderFromSourceCode(QOpenGLShader::Fragment, kLineFragmentShader);
+    lineProgram_->link();
+
     // 交错顶点：位置(x,y) + 纹理(u,v)，三角形带四角
     constexpr float kQuad[] = {
         // x      y     u     v
@@ -76,6 +108,13 @@ void VideoGLWidget::initializeGL()
     vertexBuffer_->create();
     vertexBuffer_->bind();
     vertexBuffer_->allocate(kQuad, sizeof(kQuad));
+    vertexBuffer_->release();
+
+    lineBuffer_ = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
+    lineBuffer_->create();
+    lineBuffer_->bind();
+    lineBuffer_->allocate(nullptr, 5 * 2 * sizeof(float));
+    lineBuffer_->release();
 
     program_->bind();
     program_->enableAttributeArray("aPos");
@@ -137,7 +176,44 @@ void VideoGLWidget::paintGL()
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     program_->release();
 
+    drawDetections(); // 检测框叠加（同视口，归一化坐标直映 NDC）
+
     ++renderedFrames_;
+}
+
+void VideoGLWidget::drawDetections()
+{
+    // UI 线程经读写锁读取最新检测（DataManager 低频写/UI 高频读设计）
+    const std::vector<Detection> dets = DataManager::instance().detections();
+    if (dets.empty()) {
+        return;
+    }
+
+    glLineWidth(2.0F);
+    lineProgram_->bind();
+    lineBuffer_->bind();
+    lineProgram_->enableAttributeArray("aPos");
+    lineProgram_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 2 * sizeof(float));
+
+    for (const Detection& d : dets) {
+        // 归一化坐标（图像左上原点）-> NDC（y 轴向上）
+        const float x1 = 2.0F * d.x - 1.0F;
+        const float y1 = 1.0F - 2.0F * d.y;
+        const float x2 = 2.0F * (d.x + d.w) - 1.0F;
+        const float y2 = 1.0F - 2.0F * (d.y + d.h);
+        const float verts[5][2] = {
+            {x1, y1}, {x2, y1}, {x2, y2}, {x1, y2}, {x1, y1},
+        };
+
+        const int idx = (d.classId >= 0) ? (d.classId % kPaletteSize) : 0;
+        lineProgram_->setUniformValue("uColor", kPalette[idx][0], kPalette[idx][1],
+                                      kPalette[idx][2], kPalette[idx][3]);
+        lineBuffer_->write(0, verts, sizeof(verts));
+        glDrawArrays(GL_LINE_STRIP, 0, 5);
+    }
+
+    lineBuffer_->release();
+    lineProgram_->release();
 }
 
 void VideoGLWidget::drainLatest()

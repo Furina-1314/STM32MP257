@@ -20,10 +20,11 @@ namespace salacia {
 // 拉取节奏：33ms 定时器驱动（720p@30fps 场景满帧刷新；1080p@12fps 同步覆盖），
 // 仅在有新帧时才请求重绘，空转零开销。
 //
+// AI 检测叠加：paintGL 内经 DataManager 读写锁读取最新检测集合，
+// 在视频视口上以 NDC 线框绘制检测框（归一化坐标与画面同源，无需换算）。
+//
 // 分辨率适配：1080p/720p 双格式动态切换——纹理尺寸变化时重建，
 // 画面按源宽高比信箱式(letterbox)居中显示。
-//
-// 线程红线：本组件仅在被 GUI 线程触碰；RingBuffer 的 SPSC 消费者即本组件。
 class VideoGLWidget : public QOpenGLWidget, private QOpenGLFunctions
 {
     Q_OBJECT
@@ -43,12 +44,15 @@ protected:
     void paintGL() override;
 
 private:
-    void drainLatest(); // 排空环形缓冲，仅保留最新帧（旧帧丢弃保低延迟）
+    void drainLatest();            // 排空环形缓冲，仅保留最新帧（旧帧丢弃保低延迟）
+    void drawDetections();         // 检测框叠加（NDC 线框，含类别配色）
 
     RingBuffer<VideoFrame, 4>* source_ = nullptr; // 不拥有
 
-    std::unique_ptr<QOpenGLShaderProgram> program_;
+    std::unique_ptr<QOpenGLShaderProgram> program_;     // 视频纹理着色
+    std::unique_ptr<QOpenGLShaderProgram> lineProgram_; // 检测框纯色着色
     std::unique_ptr<QOpenGLBuffer> vertexBuffer_;
+    std::unique_ptr<QOpenGLBuffer> lineBuffer_; // 检测框动态顶点
     unsigned int textureId_ = 0;  // OpenGL 纹理句柄（GL 资源，dtor 中释放）
     int textureWidth_ = 0;
     int textureHeight_ = 0;
