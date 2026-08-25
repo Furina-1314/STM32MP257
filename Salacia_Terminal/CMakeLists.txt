@@ -115,13 +115,18 @@ salacia_add_gst_lib(Gst::PbUtils "${GST_PBUTILS_LIBRARY}")
 message(STATUS "GStreamer    : ${GSTREAMER_ROOT}")
 
 # -----------------------------------------------------------------------------
-# 5. ONNX Runtime（AI 推理，Phase 4 接入）
-#    当前默认指向 pip 安装目录（仅含运行时 DLL，见 .vibestate.md TD-2）；
-#    C++ 头文件/导入库就绪前仅告警不阻断配置，Phase 4 前必须替换为官方
-#    win-x64 发行包（include/ + lib/onnxruntime.lib）。
+# 5. ONNX Runtime 1.24.4（AI 推理，Phase 4 接入）
+#    多平台 EP 策略，三套 C++ 发行版已安装于 F:/onnxruntime（同版本 1.24.4，
+#    统一 C++ API，避免变体间接口漂移）：
+#      - directml-1.24.4 —— DirectML EP，本机 Intel Iris Xe 核显（默认）
+#      - gpu-1.24.4     —— CUDA/TensorRT EP，NVIDIA RTX 独显平台
+#                          （运行期另需 CUDA Toolkit + cuDNN）
+#      - cpu-1.24.4     —— CPU EP，兜底与调试
+#    切换变体：cmake -DONNXRUNTIME_ROOT=F:/onnxruntime/<变体目录>
+#    （Python 侧 pip 1.29.0 仅用于 .pt -> .onnx 转换，与 C++ 版本无关）
 # -----------------------------------------------------------------------------
-set(ONNXRUNTIME_ROOT "F:/Python/Python314/Lib/site-packages/onnxruntime" CACHE PATH
-    "ONNX Runtime 根目录（须为含 include/ 与 lib/ 的 C++ 发行版）")
+set(ONNXRUNTIME_ROOT "F:/onnxruntime/directml-1.24.4" CACHE PATH
+    "ONNX Runtime C++ 根目录（标准布局：include/ + lib/ + bin/）")
 
 find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
     HINTS "${ONNXRUNTIME_ROOT}/include" "${ONNXRUNTIME_ROOT}")
