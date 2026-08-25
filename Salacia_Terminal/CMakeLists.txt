@@ -150,6 +150,8 @@ set(PROJECT_SOURCES
     src/Salacia_Terminal.h
     src/Salacia_Terminal.cpp
     src/Salacia_Terminal.ui
+    src/core/Logger.h
+    src/core/Logger.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
