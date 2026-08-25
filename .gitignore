@@ -3,4 +3,7 @@
 ################################################################################
 
 /Salacia_Terminal/.vs
-/Salacia_Terminal/out/build/debug
+/Salacia_Terminal/out/
+/Salacia_Terminal/Salacia_Terminal.slnx
+/Salacia_Terminal/.zcode/
+/.vs
