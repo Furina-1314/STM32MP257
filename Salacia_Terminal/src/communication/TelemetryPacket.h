@@ -8,27 +8,31 @@
 namespace salacia {
 
 // ============================================================================
-// 遥测线协议草案 v1（TD-3，板端待实现——按此格式发送）
+// 遥测线协议草案 v2（TD-3；板端按此实现）
+//
+// 板载传感器：MPU6500（六轴 IMU -> 舱体姿态）、舱内温湿度传感器、
+// 电池电压传感器。终端显示：舱体姿态 / 舱内温湿度 / 电池电量。
 //
 // 传输：UDP 单播 -> 岸基终端 [rov] telemetry_port（默认 5001），20Hz
-// 字节序：小端（x86 主机序直读）；整个报文定长 46 字节，packed
+// 字节序：小端（x86 主机序直读）；整个报文定长 50 字节，packed
 //
-//   偏移  字段             类型      说明
-//   0     magic            u16       0xA55A
-//   2     version          u8        协议版本（当前 1）
-//   3     flags            u8        位域：bit0 加速度有效 bit1 陀螺有效
-//   4     sequence         u32       序号（回绕）
-//   8     boardTimeMs      u32       板端时间戳
-//   12    accelMps2[3]     f32 x3    加速度（m/s^2，机体系）
-//   24    gyroRadS[3]      f32 x3    角速度（rad/s，机体系）
-//   36    depthM           f32       深度（米）
-//   40    temperatureC     f32       温度（摄氏度）
-//   44    crc16            u16       CRC16-CCITT-FALSE（初值 0xFFFF，
-//                                    多项式 0x1021，覆盖偏移 0~43）
+//   偏移  字段              类型      说明
+//   0     magic             u16       0xA55A
+//   2     version           u8        协议版本（当前 2）
+//   3     flags             u8        位域：bit0 加速度有效 bit1 陀螺有效
+//   4     sequence          u32       序号（回绕）
+//   8     boardTimeMs       u32       板端时间戳
+//   12    accelMps2[3]      f32 x3    加速度（m/s^2，机体系）
+//   24    gyroRadS[3]       f32 x3    角速度（rad/s，机体系）
+//   36    cabinTempC        f32       舱内温度（摄氏度）
+//   40    cabinHumidityPct  f32       舱内湿度（%RH）
+//   44    batteryVoltage    f32       电池电压（伏）
+//   48    crc16             u16       CRC16-CCITT-FALSE（初值 0xFFFF，
+//                                     多项式 0x1021，覆盖偏移 0~47）
 // ============================================================================
 
 constexpr quint16 kTelemetryMagic = 0xA55AU;
-constexpr quint8 kTelemetryVersion = 1U;
+constexpr quint8 kTelemetryVersion = 2U;
 
 #pragma pack(push, 1)
 struct TelemetryWirePacket
@@ -40,13 +44,14 @@ struct TelemetryWirePacket
     quint32 boardTimeMs;
     float accelMps2[3];
     float gyroRadS[3];
-    float depthM;
-    float temperatureC;
+    float cabinTempC;
+    float cabinHumidityPct;
+    float batteryVoltage;
     quint16 crc16;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(TelemetryWirePacket) == 46, "telemetry wire size must be 46");
+static_assert(sizeof(TelemetryWirePacket) == 50, "telemetry wire size must be 50");
 
 // 解析后的有效样本（含岸基接收时刻）
 struct RawImuSample
@@ -56,8 +61,9 @@ struct RawImuSample
     quint16 sequence = 0;
     float accelMps2[3] = {0.0F, 0.0F, 0.0F};
     float gyroRadS[3] = {0.0F, 0.0F, 0.0F};
-    float depthM = 0.0F;
-    float temperatureC = 0.0F;
+    float cabinTempC = 0.0F;
+    float cabinHumidityPct = 0.0F;
+    float batteryVoltage = 0.0F;
 };
 
 // CRC16-CCITT-FALSE（初值 0xFFFF，多项式 0x1021，逐位实现）
@@ -104,8 +110,9 @@ inline bool parseTelemetryPacket(const char* data, qint64 size, RawImuSample& ou
     out.gyroRadS[0] = pkt.gyroRadS[0];
     out.gyroRadS[1] = pkt.gyroRadS[1];
     out.gyroRadS[2] = pkt.gyroRadS[2];
-    out.depthM = pkt.depthM;
-    out.temperatureC = pkt.temperatureC;
+    out.cabinTempC = pkt.cabinTempC;
+    out.cabinHumidityPct = pkt.cabinHumidityPct;
+    out.batteryVoltage = pkt.batteryVoltage;
     return true;
 }
 

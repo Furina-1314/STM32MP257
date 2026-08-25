@@ -1,7 +1,7 @@
 #pragma once
 
 #include "communication/TelemetryPacket.h" // RawImuSample
-#include "core/DataManager.h"              // AttitudeData
+#include "core/DataManager.h"              // RovState
 
 #include <cstdint>
 
@@ -19,8 +19,8 @@ public:
 
     void setGains(float kp, float ki);
 
-    // 输入一帧原始 IMU，推进滤波并输出姿态（四元数 + 欧拉角）
-    AttitudeData process(const RawImuSample& sample);
+    // 输入一帧原始 IMU，推进滤波并输出舱体状态（姿态 + 温湿度/电压透传）
+    RovState process(const RawImuSample& sample);
 
     void reset();
 

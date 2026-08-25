@@ -115,6 +115,10 @@ bool AppConfig::load(const QString& explicitPath)
     // ---- [rov] ----
     telemetryPort_ = static_cast<quint16>(boundedInt(ini, "rov/telemetry_port",
                                                      telemetryPort_, 1, 65535));
+    batteryFullVoltage_ = static_cast<float>(boundedDouble(ini, "rov/battery_full_voltage",
+                                                           batteryFullVoltage_, 3.0, 60.0));
+    batteryEmptyVoltage_ = static_cast<float>(boundedDouble(ini, "rov/battery_empty_voltage",
+                                                            batteryEmptyVoltage_, 3.0, 60.0));
     sshHost_ = ini.value(QStringLiteral("rov/ssh_host"), sshHost_).toString();
     sshPort_ = static_cast<quint16>(boundedInt(ini, "rov/ssh_port",
                                                sshPort_, 1, 65535));

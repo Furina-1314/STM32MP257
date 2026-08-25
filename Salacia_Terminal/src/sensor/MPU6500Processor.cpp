@@ -46,11 +46,12 @@ void MPU6500Processor::reset()
     lastHostMs_ = 0;
 }
 
-AttitudeData MPU6500Processor::process(const RawImuSample& sample)
+RovState MPU6500Processor::process(const RawImuSample& sample)
 {
-    AttitudeData out;
-    out.depthM = sample.depthM;
-    out.temperatureC = sample.temperatureC;
+    RovState out;
+    out.cabinTempC = sample.cabinTempC;
+    out.cabinHumidityPct = sample.cabinHumidityPct;
+    out.batteryVoltage = sample.batteryVoltage;
     out.timestampMs = static_cast<qint64>(sample.hostTimeMs);
 
     // 首帧：仅初始化时间基准

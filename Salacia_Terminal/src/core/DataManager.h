@@ -9,16 +9,19 @@
 
 namespace salacia {
 
-// 姿态与传感器数据（20Hz 遥测；网络线程写 / UI 线程读）
-struct AttitudeData
+// 舱体状态（20Hz 遥测；网络线程写 / UI 线程读）
+// 板载传感器：MPU6500（姿态）+ 舱内温湿度 + 电池电压
+struct RovState
 {
     qint64 timestampMs = 0;                              // 采集时间戳
     float quaternion[4] = {1.0F, 0.0F, 0.0F, 0.0F};      // 姿态四元数 w x y z
     float rollDeg = 0.0F;                                // 欧拉角（度）
     float pitchDeg = 0.0F;
     float yawDeg = 0.0F;
-    float depthM = 0.0F;                                 // 深度（米）
-    float temperatureC = 0.0F;                           // 温度（摄氏度）
+    float cabinTempC = 0.0F;                             // 舱内温度（摄氏度）
+    float cabinHumidityPct = 0.0F;                       // 舱内湿度（%RH）
+    float batteryVoltage = 0.0F;                         // 电池电压（伏）
+    float batteryPercent = 0.0F;                         // 电池电量（%，电压折算）
 };
 
 // 单个 AI 检测框（归一化坐标 0~1，相对推理输入帧）
@@ -61,7 +64,7 @@ public:
     static DataManager& instance();
 
     // ---- 写入（各工作线程） ----
-    void setAttitude(const AttitudeData& data);              // 遥测线程 20Hz
+    void setRovState(const RovState& state);                // 遥测线程 20Hz
     void setDetections(const std::vector<Detection>& items); // 推理线程
     void setVideoStats(const VideoStats& stats);             // GStreamer 回调线程
     void setVideoActive(bool on);
@@ -69,7 +72,7 @@ public:
     void setSshConnected(bool on);
 
     // ---- 读取（任意线程；UI 高频轮询或信号触发） ----
-    AttitudeData attitude() const;
+    RovState rovState() const;
     std::vector<Detection> detections() const;
     VideoStats videoStats() const;
     bool videoActive() const { return videoActive_.load(std::memory_order_acquire); }
@@ -78,7 +81,7 @@ public:
 
 signals:
     // 仅通知“有新数据”，无载荷；跨线程自动排队
-    void attitudeUpdated();
+    void rovStateUpdated();
     void detectionsUpdated();
     void videoStatsUpdated();
     void linkStateChanged();
@@ -88,8 +91,8 @@ private:
     ~DataManager() override;
     Q_DISABLE_COPY(DataManager)
 
-    mutable std::shared_mutex attitudeMutex_;
-    alignas(64) AttitudeData attitude_;
+    mutable std::shared_mutex rovStateMutex_;
+    alignas(64) RovState rovState_;
 
     mutable std::shared_mutex detectionsMutex_;
     alignas(64) std::vector<Detection> detections_;

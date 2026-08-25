@@ -17,19 +17,19 @@ DataManager::DataManager(QObject* parent)
 
 DataManager::~DataManager() = default;
 
-void DataManager::setAttitude(const AttitudeData& data)
+void DataManager::setRovState(const RovState& state)
 {
     {
-        const std::unique_lock<std::shared_mutex> lock(attitudeMutex_);
-        attitude_ = data;
+        const std::unique_lock<std::shared_mutex> lock(rovStateMutex_);
+        rovState_ = state;
     }
-    emit attitudeUpdated();
+    emit rovStateUpdated();
 }
 
-AttitudeData DataManager::attitude() const
+RovState DataManager::rovState() const
 {
-    const std::shared_lock<std::shared_mutex> lock(attitudeMutex_);
-    return attitude_;
+    const std::shared_lock<std::shared_mutex> lock(rovStateMutex_);
+    return rovState_;
 }
 
 void DataManager::setDetections(const std::vector<Detection>& items)

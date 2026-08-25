@@ -42,6 +42,8 @@ public:
     int inputHeight() const { return inputHeight_; }
     double confidenceThreshold() const { return confidenceThreshold_; }
     float nmsIouThreshold() const { return nmsIouThreshold_; }
+    float batteryFullVoltage() const { return batteryFullVoltage_; }
+    float batteryEmptyVoltage() const { return batteryEmptyVoltage_; }
     float mahonyKp() const { return mahonyKp_; }
     float mahonyKi() const { return mahonyKi_; }
     QString executionProvider() const { return executionProvider_; }
@@ -78,6 +80,8 @@ private:
     QString executionProvider_ = QStringLiteral("auto");
 
     quint16 telemetryPort_ = 5001;
+    float batteryFullVoltage_ = 16.8F;   // 满电电压（默认 4S 锂电）
+    float batteryEmptyVoltage_ = 13.0F;  // 放空电压
     QString sshHost_ = QStringLiteral("192.168.137.2");
     quint16 sshPort_ = 22;
     QString sshUser_ = QStringLiteral("root");

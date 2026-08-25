@@ -133,8 +133,16 @@ void UdpReceiver::readPending()
         }
 
         sample.hostTimeMs = static_cast<quint64>(QDateTime::currentMSecsSinceEpoch());
-        const AttitudeData attitude = processor_.process(sample);
-        DataManager::instance().setAttitude(attitude);
+        RovState state = processor_.process(sample);
+
+        // 电池电量折算（满/空电压来自 app_config.ini，参数解耦红线）
+        const float full = static_cast<float>(AppConfig::instance().batteryFullVoltage());
+        const float empty = static_cast<float>(AppConfig::instance().batteryEmptyVoltage());
+        if (full > empty) {
+            const float pct = (sample.batteryVoltage - empty) / (full - empty) * 100.0F;
+            state.batteryPercent = (pct < 0.0F) ? 0.0F : ((pct > 100.0F) ? 100.0F : pct);
+        }
+        DataManager::instance().setRovState(state);
 
         received_.fetch_add(1, std::memory_order_acq_rel);
         lastPacketMs_.store(static_cast<qint64>(sample.hostTimeMs),
