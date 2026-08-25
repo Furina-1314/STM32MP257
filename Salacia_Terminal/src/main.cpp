@@ -1,4 +1,4 @@
-#include "Salacia_Terminal.h"
+#include "MainWindow.h"
 
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -29,9 +29,7 @@ int main(int argc, char *argv[])
     // 3) 主窗口：GUI 线程只承担事件循环与渲染
     int exitCode = 0;
     {
-        Salacia_Terminal window;
-        window.setWindowTitle(QString::fromLocal8Bit("Salacia 水下机器人岸基终端"));
-        window.resize(1280, 800);
+        salacia::MainWindow window;
         window.show();
         exitCode = app.exec();
     } // 窗口先于日志系统析构（析构期间仍可安全写日志）

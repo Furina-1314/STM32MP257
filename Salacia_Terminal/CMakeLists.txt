@@ -50,6 +50,8 @@ find_package(Qt6 6.11.1 REQUIRED COMPONENTS
     Quick3D        # 3D 姿态实时显示
     Network        # UDP 传感器接收
     Concurrent     # 推理 / 通信后台任务
+    OpenGL         # QOpenGLShaderProgram / QOpenGLFunctions
+    OpenGLWidgets  # QOpenGLWidget（视频显示组件）
 )
 qt_standard_project_setup()
 
@@ -152,9 +154,8 @@ endif()
 # -----------------------------------------------------------------------------
 set(PROJECT_SOURCES
     src/main.cpp
-    src/Salacia_Terminal.h
-    src/Salacia_Terminal.cpp
-    src/Salacia_Terminal.ui
+    src/MainWindow.h
+    src/MainWindow.cpp
     src/core/Logger.h
     src/core/Logger.cpp
     src/core/AppConfig.h
@@ -165,6 +166,8 @@ set(PROJECT_SOURCES
     src/video/VideoFrame.h
     src/video/GStreamerPipeline.h
     src/video/GStreamerPipeline.cpp
+    src/widgets/VideoGLWidget.h
+    src/widgets/VideoGLWidget.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
@@ -183,6 +186,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
+    Qt6::OpenGL Qt6::OpenGLWidgets                    # Phase 3：视频显示
     Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
     # Phase 4 接入：Ort::OnnxRuntime
     # Phase 5 接入：Qt6::Quick3D Qt6::Network
