@@ -157,6 +157,8 @@ set(PROJECT_SOURCES
     src/Salacia_Terminal.ui
     src/core/Logger.h
     src/core/Logger.cpp
+    src/core/AppConfig.h
+    src/core/AppConfig.cpp
     src/utils/RingBuffer.h
 )
 
@@ -176,4 +178,12 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     # Phase 4 接入：Ort::OnnxRuntime
     # Phase 5 接入：Qt6::Quick Qt6::Quick3D Qt6::Network
     # Phase 6 接入：Qt6::Concurrent + libssh
+)
+
+# 运行期配置随构建同步到可执行文件目录（开发期直接运行即可找到）
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/app_config.ini"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/app_config.ini"
 )
