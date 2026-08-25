@@ -162,9 +162,15 @@ set(PROJECT_SOURCES
     src/core/DataManager.h
     src/core/DataManager.cpp
     src/utils/RingBuffer.h
+    src/video/VideoFrame.h
+    src/video/GStreamerPipeline.h
+    src/video/GStreamerPipeline.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
+
+# 源码根包含路径（src/ 下跨模块头文件引用，如 "core/Logger.h"）
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
     WIN32_EXECUTABLE TRUE
@@ -177,7 +183,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
-    # Phase 3 接入：Gst::GStreamer Gst::App Gst::Video Gst::GL Gst::Rtp
+    Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
     # Phase 4 接入：Ort::OnnxRuntime
     # Phase 5 接入：Qt6::Quick3D Qt6::Network
     # Phase 6 接入：Qt6::Concurrent + libssh
