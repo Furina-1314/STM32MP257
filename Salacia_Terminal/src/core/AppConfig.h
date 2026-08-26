@@ -53,6 +53,9 @@ public:
     QString sshHost() const { return sshHost_; }
     quint16 sshPort() const { return sshPort_; }
     QString sshUser() const { return sshUser_; }
+    QString sshPassword() const { return sshPassword_; }
+    QString sshKeyPath() const { return sshKeyPath_; }
+    int sshReconnectSec() const { return sshReconnectSec_; }
 
 private:
     AppConfig() = default;
@@ -85,6 +88,9 @@ private:
     QString sshHost_ = QStringLiteral("192.168.137.2");
     quint16 sshPort_ = 22;
     QString sshUser_ = QStringLiteral("root");
+    QString sshPassword_;
+    QString sshKeyPath_;
+    int sshReconnectSec_ = 5;
 };
 
 } // namespace salacia

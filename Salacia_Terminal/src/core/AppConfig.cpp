@@ -123,6 +123,9 @@ bool AppConfig::load(const QString& explicitPath)
     sshPort_ = static_cast<quint16>(boundedInt(ini, "rov/ssh_port",
                                                sshPort_, 1, 65535));
     sshUser_ = ini.value(QStringLiteral("rov/ssh_user"), sshUser_).toString();
+    sshPassword_ = ini.value(QStringLiteral("rov/ssh_password"), sshPassword_).toString();
+    sshKeyPath_ = ini.value(QStringLiteral("rov/ssh_key_path"), sshKeyPath_).toString();
+    sshReconnectSec_ = boundedInt(ini, "rov/ssh_reconnect_sec", sshReconnectSec_, 1, 60);
 
     loaded_ = true;
     return true;
