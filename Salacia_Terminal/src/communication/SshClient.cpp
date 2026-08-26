@@ -109,6 +109,11 @@ void SshClient::tryConnect()
     }
     if (connectOnce()) {
         connected_.store(true, std::memory_order_release);
+        {
+            // 连接建立瞬间丢弃离线期间积压的陈旧指令（控制新鲜度红线）
+            const std::lock_guard<std::mutex> lock(queueMutex_);
+            commandQueue_.clear();
+        }
         Logger::info(QString::fromLocal8Bit("SSH：已连接 %1:%2")
                          .arg(settings_.host)
                          .arg(settings_.port));

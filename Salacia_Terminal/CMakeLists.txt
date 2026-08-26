@@ -204,6 +204,8 @@ set(PROJECT_SOURCES
     src/video/GStreamerPipeline.cpp
     src/widgets/VideoGLWidget.h
     src/widgets/VideoGLWidget.cpp
+    src/widgets/ControlPanelWidget.h
+    src/widgets/ControlPanelWidget.cpp
     src/recognition/IModelInfer.h
     src/recognition/OnnxInferEngine.h
     src/recognition/OnnxInferEngine.cpp
