@@ -46,8 +46,9 @@ find_package(Qt6 6.11.1 REQUIRED COMPONENTS
     Core
     Gui
     Widgets        # 主界面框架（Widgets 红线）
-    Quick          # QML：视频组件与 Quick3D 载体
-    Quick3D        # 3D 姿态实时显示
+    Quick          # QML：Quick3D 载体
+    Quick3D        # 3D 舱体姿态实时显示
+    QuickWidgets   # QQuickWidget（Widgets 内嵌 Quick3D 视图）
     Network        # UDP 传感器接收
     Concurrent     # 推理 / 通信后台任务
     OpenGL         # QOpenGLShaderProgram / QOpenGLFunctions
@@ -176,6 +177,8 @@ set(PROJECT_SOURCES
     src/communication/UdpReceiver.cpp
     src/sensor/MPU6500Processor.h
     src/sensor/MPU6500Processor.cpp
+    src/sensor/RovVizModel.h
+    src/sensor/RovVizModel.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
@@ -183,6 +186,11 @@ qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 # LLVM 22 的 clang-tidy 在 MSVC 兼容模式下无法启用异常解析（/EHsc 与
 # -fexceptions 均无效，已实测），唯一使用 try/catch 与 ORT 异常 API 的
 # 翻译单元跳过静态分析；其余源文件维持 cert/misra 检查红线。
+# Quick3D 三维姿态场景（QML 资源）
+qt_add_resources(${PROJECT_NAME} "salacia_qml"
+    PREFIX "/qml"
+    FILES src/qml/RovViz.qml)
+
 set_source_files_properties(src/recognition/OnnxInferEngine.cpp
     PROPERTIES SKIP_LINTING ON)
 
@@ -202,6 +210,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
     Qt6::OpenGL Qt6::OpenGLWidgets                    # Phase 3：视频显示
     Qt6::Network                                      # Phase 5：UDP 遥测
+    Qt6::Quick Qt6::QuickWidgets Qt6::Quick3D         # Phase 5：3D 舱体姿态
     dbghelp                                         # 崩溃迷你转储（main.cpp）
     Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
     Ort::OnnxRuntime                     # Phase 4：AI 异构推理

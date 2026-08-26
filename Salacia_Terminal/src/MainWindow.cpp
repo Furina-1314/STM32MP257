@@ -2,13 +2,20 @@
 
 #include <QCloseEvent>
 #include <QDateTime>
+#include <QDockWidget>
+#include <QFormLayout>
 #include <QLabel>
+#include <QQmlContext>
+#include <QQuickWidget>
 #include <QStatusBar>
+#include <QVBoxLayout>
 
+#include "communication/UdpReceiver.h"
 #include "core/AppConfig.h"
 #include "core/DataManager.h"
 #include "core/Logger.h"
 #include "recognition/OnnxInferEngine.h"
+#include "sensor/RovVizModel.h"
 #include "video/GStreamerPipeline.h"
 #include "widgets/VideoGLWidget.h"
 
@@ -18,25 +25,37 @@ MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
 {
     setWindowTitle(QString::fromLocal8Bit("Salacia 水下机器人岸基终端"));
-    resize(1280, 800);
+    resize(1440, 860);
 
     pipeline_ = std::make_unique<GStreamerPipeline>(this);
+    telemetryReceiver_ = std::make_unique<UdpReceiver>(); // 无父：Worker 红线
 
+    // ---- 中央视频区 ----
     videoWidget_ = new VideoGLWidget(this);
     videoWidget_->setSource(&pipeline_->displayFrames());
     setCentralWidget(videoWidget_);
 
+    // ---- 右侧舱体状态坞 ----
+    rovViz_ = new RovVizModel(this);
+    rovViz_->bindToDataManager();
+    QDockWidget* dock = new QDockWidget(QString::fromLocal8Bit("舱体状态"), this);
+    dock->setWidget(createStatusDock());
+    dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::RightDockWidgetArea, dock);
+
+    // ---- 状态栏 ----
     videoStatsLabel_ = new QLabel(QString::fromLocal8Bit("视频：等待流"), this);
     statusBar()->addPermanentWidget(videoStatsLabel_);
     aiStatsLabel_ = new QLabel(QString::fromLocal8Bit("AI：未启用"), this);
     statusBar()->addPermanentWidget(aiStatsLabel_);
+    telemetryLabel_ = new QLabel(QString::fromLocal8Bit("遥测：等待"), this);
+    statusBar()->addPermanentWidget(telemetryLabel_);
 
-    // 管线错误 -> 状态栏（信号自主线程排队发出；显式 QueuedConnection 红线）
+    // 管线错误 -> 状态栏（显式 QueuedConnection 红线）
     connect(pipeline_.get(), &GStreamerPipeline::errorOccurred, this,
             [this](const QString& message) { statusBar()->showMessage(message, 5000); },
             Qt::QueuedConnection);
 
-    // 1Hz 链路统计 -> 状态栏标签（DataManager 信号，显式 QueuedConnection）
     connect(&DataManager::instance(), &DataManager::videoStatsUpdated, this, [this] {
         const VideoStats s = DataManager::instance().videoStats();
         const bool active = DataManager::instance().videoActive();
@@ -48,14 +67,24 @@ MainWindow::MainWindow(QWidget* parent)
                             : QString::fromLocal8Bit("离线")));
     }, Qt::QueuedConnection);
 
+    connect(telemetryReceiver_.get(), &UdpReceiver::telemetryActiveChanged, this,
+            [this](bool active) {
+                telemetryLabel_->setText(active
+                        ? QString::fromLocal8Bit("遥测：在线")
+                        : QString::fromLocal8Bit("遥测：离线"));
+            }, Qt::QueuedConnection);
+    connect(telemetryReceiver_.get(), &UdpReceiver::receiverError, this,
+            [this](const QString& message) { statusBar()->showMessage(message, 5000); },
+            Qt::QueuedConnection);
+
+    // ---- 启动各数据面（配置门控） ----
     if (!pipeline_->start()) {
         statusBar()->showMessage(QString::fromLocal8Bit("视频管线启动失败，详见日志"), 10000);
     }
+    telemetryReceiver_->start();
 
-    // ---- AI 推理接线（参数解耦：aiEnabled 来自 app_config.ini） ----
     if (AppConfig::instance().aiEnabled()) {
-        // 红线：Worker-Object 禁止设置父对象，否则 moveToThread 失败、
-        // 对象滞留 GUI 线程（曾导致退出死锁）；生命周期由 unique_ptr 管理
+        // Worker 一律无父创建（moveToThread 红线）；生命周期由 unique_ptr 管理
         aiEngine_ = std::make_unique<OnnxInferEngine>();
 
         connect(aiEngine_.get(), &OnnxInferEngine::backendReady, this,
@@ -69,7 +98,6 @@ MainWindow::MainWindow(QWidget* parent)
                     statusBar()->showMessage(QString::fromLocal8Bit("AI 启动失败：") + reason, 10000);
                 }, Qt::QueuedConnection);
 
-        // 检测结果刷新 AI 状态（推理频率可达 30Hz，标签节流 200ms）
         connect(&DataManager::instance(), &DataManager::detectionsUpdated, this, [this] {
             const qint64 now = QDateTime::currentMSecsSinceEpoch();
             if ((now - lastAiLabelMs_) < 200) {
@@ -92,21 +120,71 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow()
 {
-    // 独立于 closeEvent 的兜底：stop() 均幂等
+    // 兜底：stop() 均幂等
+}
+
+QWidget* MainWindow::createStatusDock()
+{
+    QWidget* panel = new QWidget(this);
+    QVBoxLayout* layout = new QVBoxLayout(panel);
+
+    // 三维姿态（Quick3D，OpenGL RHI 由 main.cpp 全局强制）
+    QQuickWidget* quick = new QQuickWidget(panel);
+    quick->setClearColor(QColor(0x14, 0x19, 0x22));
+    quick->rootContext()->setContextProperty(QStringLiteral("rovViz"), rovViz_);
+    quick->setSource(QUrl(QStringLiteral("qrc:/qml/RovViz.qml")));
+    quick->setResizeMode(QQuickWidget::SizeRootObjectToView);
+    quick->setMinimumHeight(340);
+    layout->addWidget(quick, 1);
+
+    // 传感器表单（5Hz 节流刷新）
+    QFormLayout* form = new QFormLayout();
+    rollLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    pitchLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    yawLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    tempLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    humidLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    batteryLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
+    form->addRow(QString::fromLocal8Bit("横滚 Roll"), rollLabel_);
+    form->addRow(QString::fromLocal8Bit("俯仰 Pitch"), pitchLabel_);
+    form->addRow(QString::fromLocal8Bit("航向 Yaw"), yawLabel_);
+    form->addRow(QString::fromLocal8Bit("舱内温度"), tempLabel_);
+    form->addRow(QString::fromLocal8Bit("舱内湿度"), humidLabel_);
+    form->addRow(QString::fromLocal8Bit("电池电量"), batteryLabel_);
+    layout->addLayout(form);
+
+    connect(rovViz_, &RovVizModel::stateChanged, this, [this] {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if ((now - lastPanelMs_) < 200) {
+            return; // 20Hz 数据 -> 5Hz 表单
+        }
+        lastPanelMs_ = now;
+        rollLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->rollDeg(), 0, 'f', 1));
+        pitchLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->pitchDeg(), 0, 'f', 1));
+        yawLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->yawDeg(), 0, 'f', 1));
+        tempLabel_->setText(QString::fromLatin1("%1 °C").arg(rovViz_->cabinTempC(), 0, 'f', 1));
+        humidLabel_->setText(QString::fromLatin1("%1 %RH").arg(rovViz_->cabinHumidityPct(), 0, 'f', 1));
+        batteryLabel_->setText(QString::fromLatin1("%1 %（%2 V）")
+                                   .arg(rovViz_->batteryPercent(), 0, 'f', 0)
+                                   .arg(rovViz_->batteryVoltage(), 0, 'f', 2));
+    }, Qt::QueuedConnection);
+
+    return panel;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     // 逆序安全退出：先停视频绘制并排空 GPU（消除 GL/d3d11 驱动层竞态），
-    // 再停网络接收（视频数据面），再停推理线程（其内部在工作线程释放
-    // ONNX/GPU 上下文），最后进入 GUI 析构
+    // 再停网络接收（视频数据面 + 遥测），再停推理线程（其内部在工作线程
+    // 释放 ONNX/GPU 上下文），最后进入 GUI 析构
     videoWidget_->releaseGl();
     pipeline_->stopForExit();
     pipeline_.release(); // 管线已停流并故意泄漏（TD-8），放弃所有权
+    telemetryReceiver_->stop();
     if (aiEngine_ != nullptr) {
         aiEngine_->stop();
     }
-    Logger::info(QString::fromLocal8Bit("主窗口关闭：视频管线与推理引擎已停止"));
+    Logger::info(QString::fromLocal8Bit("主窗口关闭：视频/遥测/推理已全部停止"));
 
     // TD-8 规避：退出阶段销毁 QOpenGLWidget 会触发 Intel Iris Xe ICD
     // 确定性崩溃（igxelpicd64.dll 空函数指针调用，转储证实）。
