@@ -10,6 +10,7 @@
 #include <QStatusBar>
 #include <QVBoxLayout>
 
+#include "communication/SshClient.h"
 #include "communication/UdpReceiver.h"
 #include "core/AppConfig.h"
 #include "core/DataManager.h"
@@ -17,6 +18,7 @@
 #include "recognition/OnnxInferEngine.h"
 #include "sensor/RovVizModel.h"
 #include "video/GStreamerPipeline.h"
+#include "widgets/ControlPanelWidget.h"
 #include "widgets/VideoGLWidget.h"
 
 namespace salacia {
@@ -35,6 +37,24 @@ MainWindow::MainWindow(QWidget* parent)
     videoWidget_->setSource(&pipeline_->displayFrames());
     setCentralWidget(videoWidget_);
 
+    // ---- 左侧执行机构遥控坞（16 路 PWM：10 舵机 + 6 推进器） ----
+    sshClient_ = std::make_unique<SshClient>(); // 无父：Worker 红线
+    controlPanel_ = new ControlPanelWidget(this);
+    connect(controlPanel_, &ControlPanelWidget::pwmCommandRequested, this,
+            [this](int deviceId, int pulseUs) {
+                // 板端 CLI 约定：pwm <id> <us>（id 1-10 舵机 / 11-16 推进器）
+                sshClient_->requestCommand(
+                        QString::fromLatin1("pwm %1 %2").arg(deviceId).arg(pulseUs));
+            });
+    connect(controlPanel_, &ControlPanelWidget::emergencyStopRequested, this, [this] {
+                statusBar()->showMessage(
+                        QString::fromLocal8Bit("紧急停机已下发：推进器中位/舵机回中"), 3000);
+            });
+    QDockWidget* controlDock = new QDockWidget(QString::fromLocal8Bit("执行机构遥控"), this);
+    controlDock->setWidget(controlPanel_);
+    controlDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
+    addDockWidget(Qt::LeftDockWidgetArea, controlDock);
+
     // ---- 右侧舱体状态坞 ----
     rovViz_ = new RovVizModel(this);
     rovViz_->bindToDataManager();
@@ -50,6 +70,8 @@ MainWindow::MainWindow(QWidget* parent)
     statusBar()->addPermanentWidget(aiStatsLabel_);
     telemetryLabel_ = new QLabel(QString::fromLocal8Bit("遥测：等待"), this);
     statusBar()->addPermanentWidget(telemetryLabel_);
+    sshLabel_ = new QLabel(QString::fromLocal8Bit("SSH：连接中"), this);
+    statusBar()->addPermanentWidget(sshLabel_);
 
     // 管线错误 -> 状态栏（显式 QueuedConnection 红线）
     connect(pipeline_.get(), &GStreamerPipeline::errorOccurred, this,
@@ -82,6 +104,29 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage(QString::fromLocal8Bit("视频管线启动失败，详见日志"), 10000);
     }
     telemetryReceiver_->start();
+
+    // SSH 遥控通道（参数全部来自 ini [rov]）
+    {
+        SshClient::Settings sshSettings;
+        const AppConfig& cfg = AppConfig::instance();
+        sshSettings.host = cfg.sshHost();
+        sshSettings.port = cfg.sshPort();
+        sshSettings.user = cfg.sshUser();
+        sshSettings.password = cfg.sshPassword();
+        sshSettings.keyPath = cfg.sshKeyPath();
+        sshSettings.reconnectSec = cfg.sshReconnectSec();
+        connect(sshClient_.get(), &SshClient::connectionStateChanged, this,
+                [this](bool on) {
+                    sshLabel_->setText(on ? QString::fromLocal8Bit("SSH：在线")
+                                          : QString::fromLocal8Bit("SSH：离线"));
+                    controlPanel_->setLinkStatus(on);
+                }, Qt::QueuedConnection);
+        connect(sshClient_.get(), &SshClient::clientError, this,
+                [this](const QString& message) {
+                    Logger::warning(message);
+                }, Qt::QueuedConnection);
+        sshClient_->start(sshSettings);
+    }
 
     if (AppConfig::instance().aiEnabled()) {
         // Worker 一律无父创建（moveToThread 红线）；生命周期由 unique_ptr 管理
@@ -181,10 +226,11 @@ void MainWindow::closeEvent(QCloseEvent* event)
     pipeline_->stopForExit();
     pipeline_.release(); // 管线已停流并故意泄漏（TD-8），放弃所有权
     telemetryReceiver_->stop();
+    sshClient_->stop();
     if (aiEngine_ != nullptr) {
         aiEngine_->stop();
     }
-    Logger::info(QString::fromLocal8Bit("主窗口关闭：视频/遥测/推理已全部停止"));
+    Logger::info(QString::fromLocal8Bit("主窗口关闭：视频/遥测/SSH/推理已全部停止"));
 
     // TD-8 规避：退出阶段销毁 QOpenGLWidget 会触发 Intel Iris Xe ICD
     // 确定性崩溃（igxelpicd64.dll 空函数指针调用，转储证实）。

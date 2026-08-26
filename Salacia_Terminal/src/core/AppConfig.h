@@ -53,6 +53,16 @@ public:
     QString sshHost() const { return sshHost_; }
     quint16 sshPort() const { return sshPort_; }
     QString sshUser() const { return sshUser_; }
+    QString sshPassword() const { return sshPassword_; }
+    QString sshKeyPath() const { return sshKeyPath_; }
+    int sshReconnectSec() const { return sshReconnectSec_; }
+
+    // ---- [control] PWM 量程 ----
+    int servoMinUs() const { return servoMinUs_; }
+    int servoMaxUs() const { return servoMaxUs_; }
+    int thrusterMinUs() const { return thrusterMinUs_; }
+    int thrusterMaxUs() const { return thrusterMaxUs_; }
+    int thrusterNeutralUs() const { return thrusterNeutralUs_; }
 
 private:
     AppConfig() = default;
@@ -85,6 +95,15 @@ private:
     QString sshHost_ = QStringLiteral("192.168.137.2");
     quint16 sshPort_ = 22;
     QString sshUser_ = QStringLiteral("root");
+    QString sshPassword_;
+    QString sshKeyPath_;
+    int sshReconnectSec_ = 5;
+
+    int servoMinUs_ = 500;        // 舵机 0° 脉宽
+    int servoMaxUs_ = 2500;       // 舵机 180° 脉宽
+    int thrusterMinUs_ = 1100;    // 推进器满倒脉宽
+    int thrusterMaxUs_ = 1900;    // 推进器满顺脉宽
+    int thrusterNeutralUs_ = 1500; // 推进器中位脉宽
 };
 
 } // namespace salacia

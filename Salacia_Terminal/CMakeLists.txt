@@ -128,6 +128,41 @@ message(STATUS "GStreamer    : ${GSTREAMER_ROOT}")
 #    切换变体：cmake -DONNXRUNTIME_ROOT=F:/onnxruntime/<变体目录>
 #    （Python 侧 pip 1.29.0 仅用于 .pt -> .onnx 转换，与 C++ 版本无关）
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# 5.5 libssh 0.12.2（Phase 6：SSH 遥控通道；源码编译 MSVC 静态库，
+#     密码学后端复用 GStreamer 自带 OpenSSL 3.5，运行期 DLL 已在 PATH）
+# -----------------------------------------------------------------------------
+set(LIBSSH_ROOT "F:/libssh-0.12.2-msvc" CACHE PATH "libssh MSVC 安装根目录")
+set(libssh_DIR "${LIBSSH_ROOT}/lib/cmake/libssh" CACHE PATH "libssh CMake 配置目录")
+
+find_package(libssh CONFIG QUIET)
+if(TARGET libssh::libssh)
+    set(SALACIA_SSH_LINK "libssh::libssh")
+elseif(TARGET libssh)
+    set(SALACIA_SSH_LINK "libssh")
+else()
+    # 回退：手动定位 ssh.lib + OpenSSL（复用 GStreamer 开发包）
+    find_path(LIBSSH_INCLUDE_DIR libssh/libssh.h HINTS "${LIBSSH_ROOT}/include")
+    find_library(LIBSSH_LIBRARY ssh HINTS "${LIBSSH_ROOT}/lib")
+    find_library(LIBSSH_SSL_LIBRARY ssl HINTS "${GSTREAMER_ROOT}/lib")
+    find_library(LIBSSH_CRYPTO_LIBRARY crypto HINTS "${GSTREAMER_ROOT}/lib")
+    if(LIBSSH_INCLUDE_DIR AND LIBSSH_LIBRARY AND LIBSSH_SSL_LIBRARY AND LIBSSH_CRYPTO_LIBRARY)
+        add_library(LibSsh::Client INTERFACE IMPORTED)
+        set_target_properties(LibSsh::Client PROPERTIES
+            INTERFACE_COMPILE_DEFINITIONS LIBSSH_STATIC
+            INTERFACE_INCLUDE_DIRECTORIES "${LIBSSH_INCLUDE_DIR}"
+            INTERFACE_LINK_LIBRARIES
+                "${LIBSSH_LIBRARY};${LIBSSH_SSL_LIBRARY};${LIBSSH_CRYPTO_LIBRARY};ws2_32;bcrypt;crypt32;iphlpapi;advapi32;shell32")
+        set(SALACIA_SSH_LINK "LibSsh::Client")
+    endif()
+endif()
+
+if(SALACIA_SSH_LINK)
+    message(STATUS "libssh      : ${LIBSSH_ROOT} -> ${SALACIA_SSH_LINK}")
+else()
+    message(WARNING "libssh 未找到（LIBSSH_ROOT='${LIBSSH_ROOT}'），SSH 功能不可用")
+endif()
+
 set(ONNXRUNTIME_ROOT "F:/onnxruntime/directml-1.24.4" CACHE PATH
     "ONNX Runtime C++ 根目录（标准布局：include/ + lib/ + bin/）")
 
@@ -169,12 +204,16 @@ set(PROJECT_SOURCES
     src/video/GStreamerPipeline.cpp
     src/widgets/VideoGLWidget.h
     src/widgets/VideoGLWidget.cpp
+    src/widgets/ControlPanelWidget.h
+    src/widgets/ControlPanelWidget.cpp
     src/recognition/IModelInfer.h
     src/recognition/OnnxInferEngine.h
     src/recognition/OnnxInferEngine.cpp
     src/communication/TelemetryPacket.h
     src/communication/UdpReceiver.h
     src/communication/UdpReceiver.cpp
+    src/communication/SshClient.h
+    src/communication/SshClient.cpp
     src/sensor/MPU6500Processor.h
     src/sensor/MPU6500Processor.cpp
     src/sensor/RovVizModel.h
@@ -186,6 +225,10 @@ qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 # LLVM 22 的 clang-tidy 在 MSVC 兼容模式下无法启用异常解析（/EHsc 与
 # -fexceptions 均无效，已实测），唯一使用 try/catch 与 ORT 异常 API 的
 # 翻译单元跳过静态分析；其余源文件维持 cert/misra 检查红线。
+if(SALACIA_SSH_LINK)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${SALACIA_SSH_LINK}) # Phase 6：SSH 遥控
+endif()
+
 # Quick3D 三维姿态场景（QML 资源）
 qt_add_resources(${PROJECT_NAME} "salacia_qml"
     PREFIX "/qml"

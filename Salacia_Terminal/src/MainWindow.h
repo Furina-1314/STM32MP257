@@ -9,8 +9,10 @@ class QQuickWidget;
 
 namespace salacia {
 
+class ControlPanelWidget;
 class GStreamerPipeline;
 class OnnxInferEngine;
+class SshClient;
 class UdpReceiver;
 class RovVizModel;
 class VideoGLWidget;
@@ -40,6 +42,7 @@ private:
 
     std::unique_ptr<GStreamerPipeline> pipeline_;
     std::unique_ptr<UdpReceiver> telemetryReceiver_; // 无父（Worker 红线）
+    std::unique_ptr<SshClient> sshClient_;           // 无父（Worker 红线）
     std::unique_ptr<OnnxInferEngine> aiEngine_;      // 仅在 aiEnabled 时创建
     RovVizModel* rovViz_ = nullptr;                  // Qt 父子所有权（主线程）
 
@@ -47,6 +50,8 @@ private:
     QLabel* videoStatsLabel_ = nullptr;
     QLabel* aiStatsLabel_ = nullptr;
     QLabel* telemetryLabel_ = nullptr;
+    QLabel* sshLabel_ = nullptr;
+    ControlPanelWidget* controlPanel_ = nullptr; // Qt 父子所有权
 
     // 传感器表单标签（5Hz 节流刷新）
     QLabel* rollLabel_ = nullptr;
