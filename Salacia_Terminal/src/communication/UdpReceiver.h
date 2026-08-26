@@ -50,7 +50,7 @@ signals:
 
 private slots:
     void initOnWorker();   // 线程启动：socket 绑定 + 看门狗
-    void cleanupOnWorker();
+    void shutdownOnWorker();   // 工作线程自终结：关 socket+停定时器+退出事件循环
     void readPending();    // readyRead：批量取尽数据报
     void checkWatchdog();
 

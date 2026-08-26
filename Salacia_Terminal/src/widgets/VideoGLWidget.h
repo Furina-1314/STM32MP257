@@ -10,6 +10,7 @@
 
 class QOpenGLShaderProgram;
 class QOpenGLBuffer;
+class QOpenGLVertexArrayObject;
 class QTimer;
 
 namespace salacia {
@@ -39,6 +40,11 @@ public:
 
     quint64 renderedFrames() const { return renderedFrames_; }
 
+    // 提前显式释放 GL 资源并排空 GPU（closeEvent 首步调用；幂等）。
+    // 带流退出时 d3d11 拆卸与 GL 末帧在驱动内部并发会触发 ICD 崩溃
+    // （实测 igxelpicd64.dll 0xC0000005），先停绘制并 glFinish 消除竞态。
+    void releaseGl();
+
 protected:
     void initializeGL() override;
     void paintGL() override;
@@ -52,7 +58,11 @@ private:
     std::unique_ptr<QOpenGLShaderProgram> program_;     // 视频纹理着色
     std::unique_ptr<QOpenGLShaderProgram> lineProgram_; // 检测框纯色着色
     std::unique_ptr<QOpenGLBuffer> vertexBuffer_;
-    std::unique_ptr<QOpenGLBuffer> lineBuffer_; // 检测框动态顶点
+    std::unique_ptr<QOpenGLBuffer> lineBuffer_;  // 检测框动态顶点
+    // 独立 VAO：视频四边形与检测框各自的属性绑定，杜绝共享默认 VAO
+    // 的属性指针互相踩踏（曾引发 Intel ICD 运行期崩溃）
+    std::unique_ptr<QOpenGLVertexArrayObject> vaoQuad_;
+    std::unique_ptr<QOpenGLVertexArrayObject> vaoLines_;
     unsigned int textureId_ = 0;  // OpenGL 纹理句柄（GL 资源，dtor 中释放）
     int textureWidth_ = 0;
     int textureHeight_ = 0;
@@ -61,6 +71,7 @@ private:
     bool hasNewFrame_ = false;
     QTimer* repaintTimer_ = nullptr;
     quint64 renderedFrames_ = 0;
+    bool glCleaned_ = false; // releaseGl 幂等标记
 };
 
 } // namespace salacia

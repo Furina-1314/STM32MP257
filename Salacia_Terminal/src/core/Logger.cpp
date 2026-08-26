@@ -63,11 +63,15 @@ void Logger::shutdown()
 
     Logger& logger = instance();
 
-    // 冲刷剩余日志（主线程阻塞等待日志线程完成本轮 drain）
-    QMetaObject::invokeMethod(&logger, "drainQueue", Qt::BlockingQueuedConnection);
-
-    logger.workerThread_->quit();
-    logger.workerThread_->wait();
+    // 日志线程内：冲刷队列后自退出（非阻塞投递 + 限时阶梯护栏，杜绝死锁）
+    QMetaObject::invokeMethod(&logger, "drainAndQuit", Qt::QueuedConnection);
+    if (!logger.workerThread_->wait(3000)) {
+        logger.workerThread_->requestInterruption();
+        if (!logger.workerThread_->wait(2000)) {
+            logger.workerThread_->terminate();
+            logger.workerThread_->wait(1000);
+        }
+    }
 
     if (logger.file_.isOpen()) {
         logger.file_.flush();
@@ -87,7 +91,11 @@ void Logger::log(Level level, const QString& message)
 
     {
         const std::lock_guard<std::mutex> lock(logger.queueMutex_);
-        logger.queue_.emplace_back(static_cast<int>(level), message);
+        LogItem item;
+        item.level = static_cast<int>(level);
+        item.tid = reinterpret_cast<quintptr>(QThread::currentThreadId());
+        item.message = message;
+        logger.queue_.push_back(std::move(item));
     }
 
     // 合并投递：仅当无挂起 drain 时才投递一次事件
@@ -101,7 +109,7 @@ void Logger::drainQueue()
     drainPending_.store(false);
 
     for (;;) {
-        std::pair<int, QString> item;
+        LogItem item;
         {
             const std::lock_guard<std::mutex> lock(queueMutex_);
             if (queue_.empty()) {
@@ -111,9 +119,15 @@ void Logger::drainQueue()
             queue_.pop_front();
         }
 
-        writeLine(static_cast<Level>(item.first), item.second);
-        emit logReady(item.first, item.second);
+        writeLine(static_cast<Level>(item.level), item.tid, item.message);
+        emit logReady(item.level, item.message);
     }
+}
+
+void Logger::drainAndQuit()
+{
+    drainQueue();
+    thread()->quit(); // 自终结：主线程限时 wait 收割
 }
 
 void Logger::openFile(const QString& logDir)
@@ -152,14 +166,14 @@ void Logger::rotateIfNeeded()
     }
 }
 
-void Logger::writeLine(Level level, const QString& message)
+void Logger::writeLine(Level level, quintptr tid, const QString& message)
 {
     rotateIfNeeded();
 
     const QString line = QStringLiteral("%1 [%2] [tid 0x%3] %4\n")
             .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss.zzz")),
                  levelToString(level),
-                 QString::number(reinterpret_cast<quintptr>(QThread::currentThreadId()), 16),
+                 QString::number(tid, 16),
                  message);
 
     if (file_.isOpen()) {

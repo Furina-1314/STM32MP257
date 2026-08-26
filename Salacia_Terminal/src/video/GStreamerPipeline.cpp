@@ -56,12 +56,13 @@ bool GStreamerPipeline::start()
 void GStreamerPipeline::stop()
 {
     if (pipeline_ != nullptr) {
-        gst_element_set_state(pipeline_, GST_STATE_NULL);
+        // 先摘除总线同步处理器，再改状态：避免拆卸期间流线程回调重入
         GstBus* bus = gst_element_get_bus(pipeline_);
         if (bus != nullptr) {
             gst_bus_set_sync_handler(bus, nullptr, nullptr, nullptr);
             gst_object_unref(bus);
         }
+        gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
     }
@@ -195,6 +196,29 @@ bool GStreamerPipeline::buildAndPlay()
                      .arg(decoder)
                      .arg(aiEnabled_ ? QString::fromLatin1("ON") : QString::fromLatin1("OFF")));
     return true;
+}
+
+void GStreamerPipeline::stopForExit()
+{
+    if (pipeline_ == nullptr) {
+        return;
+    }
+    // TD-8：带流状态下销毁（NULL+unref）或强杀驱动工作线程都会触发
+    // Intel ICD 崩溃；退出路径仅停止数据流（READY），保留管线与
+    // d3d11 设备存活至进程结束，由内核回收
+    GstBus* bus = gst_element_get_bus(pipeline_);
+    if (bus != nullptr) {
+        gst_bus_set_sync_handler(bus, nullptr, nullptr, nullptr);
+        gst_object_unref(bus);
+    }
+    gst_element_set_state(pipeline_, GST_STATE_READY);
+    watchdog_.stop();
+    running_.store(false, std::memory_order_release);
+    DataManager::instance().setVideoActive(false);
+    pipeline_ = nullptr;      // 故意泄漏 GstPipeline（不 unref）
+    displaySink_ = nullptr;
+    aiSink_ = nullptr;
+    Logger::info(QString::fromLocal8Bit("视频：退出停流（管线保留至进程结束）"));
 }
 
 void GStreamerPipeline::scheduleRestart(int delayMs)

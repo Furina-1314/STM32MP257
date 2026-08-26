@@ -51,6 +51,9 @@ public:
     bool start();
     // 停止并销毁管线（幂等；回调与总线处理器随之注销）
     void stop();
+    // 进程退出专用：停数据流但【不销毁】管线（跳过 Intel 驱动 dispose
+    // 路径的退出崩溃，TD-8）；管线对象故意泄漏，内核统一回收
+    void stopForExit();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
     // 显示帧通道：生产者=GStreamer 流线程，消费者=Qt Quick 渲染线程

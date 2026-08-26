@@ -72,7 +72,7 @@ signals:
 
 private slots:
     void initOnWorker();    // 线程启动：初始化模型 + 启动轮询定时器
-    void cleanupOnWorker(); // 线程停止前：停定时器 + 释放 ONNX/GPU 上下文
+    void shutdownOnWorker(); // 工作线程自终结：停定时器+释放上下文+退出事件循环
     void pollFrames();      // 推理主循环（5ms 节拍，仅有帧才推理）
 
 private:

@@ -113,14 +113,23 @@ void OnnxInferEngine::stop()
     if (!running_.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
-    // 逆序退出：先在工作线程停定时器并释放 ONNX/GPU 上下文（阻塞等待），
-    // 再退出线程；最后主线程清空残留句柄
-    QMetaObject::invokeMethod(this, &OnnxInferEngine::cleanupOnWorker,
-                              Qt::BlockingQueuedConnection);
     if (worker_ != nullptr) {
-        worker_->quit();
-        worker_->wait();
+        // 工作线程自终结：停定时器 -> 释放 ONNX/GPU 上下文 -> 退出事件循环。
+        // 严禁 BlockingQueuedConnection（对象若滞留调用线程即死锁），
+        // 主线程仅做限时阶梯等待，GUI 永不永久阻塞（安全退出红线）
+        QMetaObject::invokeMethod(this, &OnnxInferEngine::shutdownOnWorker,
+                                  Qt::QueuedConnection);
+        if (!worker_->wait(3000)) {
+            Logger::error(QString::fromLocal8Bit("AI：停止超时，请求线程中断"));
+            worker_->requestInterruption();
+            if (!worker_->wait(2000)) {
+                Logger::error(QString::fromLocal8Bit("AI：线程未响应中断，强制终止"));
+                worker_->terminate();
+                worker_->wait(1000);
+            }
+        }
     }
+    // 兜底释放（幂等；正常路径已在工作线程完成）
     session_.reset();
     memoryInfo_.reset();
     env_.reset();
@@ -153,17 +162,18 @@ void OnnxInferEngine::initOnWorker()
                      .arg(nmsIou_));
 }
 
-void OnnxInferEngine::cleanupOnWorker()
+void OnnxInferEngine::shutdownOnWorker()
 {
     if (pollTimer_ != nullptr) {
         pollTimer_->stop();
         delete pollTimer_;
         pollTimer_ = nullptr;
     }
-    // ONNX/GPU 上下文在工作线程（其创建线程）销毁
+    // ONNX/GPU 上下文在其创建线程（本工作线程）销毁
     session_.reset();
     memoryInfo_.reset();
     env_.reset();
+    thread()->quit(); // 自终结事件循环，主线程限时 wait 收割
 }
 
 // ---------------------------------------------------------------- 初始化

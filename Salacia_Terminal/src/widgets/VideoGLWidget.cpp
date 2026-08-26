@@ -2,6 +2,7 @@
 
 #include <QOpenGLBuffer>
 #include <QOpenGLShaderProgram>
+#include <QOpenGLVertexArrayObject>
 #include <QTimer>
 
 #include <cstring>
@@ -64,7 +65,35 @@ VideoGLWidget::VideoGLWidget(QWidget* parent)
 
 VideoGLWidget::~VideoGLWidget()
 {
-    // GL 资源必须在上下文存续期间释放（先于智能指针成员析构）
+    if (!glCleaned_) {
+        // GL 资源必须在上下文存续期间释放（先于智能指针成员析构）
+        makeCurrent();
+        if (textureId_ != 0U) {
+            glDeleteTextures(1, &textureId_);
+            textureId_ = 0;
+        }
+        program_.reset();
+        lineProgram_.reset();
+        vaoQuad_.reset();
+        vaoLines_.reset();
+        vertexBuffer_.reset();
+        lineBuffer_.reset();
+        doneCurrent();
+    }
+}
+
+void VideoGLWidget::releaseGl()
+{
+    if (glCleaned_) {
+        return; // 幂等
+    }
+    glCleaned_ = true;
+
+    // 1) 停止拉取与重绘（不再产生新的 GL 工作）
+    repaintTimer_->stop();
+    source_ = nullptr;
+
+    // 2) 释放全部 GL 资源并排空 GPU 队列（上下文仍完全健康的窗口期）
     makeCurrent();
     if (textureId_ != 0U) {
         glDeleteTextures(1, &textureId_);
@@ -72,8 +101,11 @@ VideoGLWidget::~VideoGLWidget()
     }
     program_.reset();
     lineProgram_.reset();
+    vaoQuad_.reset();
+    vaoLines_.reset();
     vertexBuffer_.reset();
     lineBuffer_.reset();
+    glFinish(); // 等 GPU 队列清空，消除与 d3d11 拆卸的驱动层竞态
     doneCurrent();
 }
 
@@ -108,20 +140,36 @@ void VideoGLWidget::initializeGL()
     vertexBuffer_->create();
     vertexBuffer_->bind();
     vertexBuffer_->allocate(kQuad, sizeof(kQuad));
-    vertexBuffer_->release();
 
     lineBuffer_ = std::make_unique<QOpenGLBuffer>(QOpenGLBuffer::VertexBuffer);
     lineBuffer_->create();
     lineBuffer_->bind();
     lineBuffer_->allocate(nullptr, 5 * 2 * sizeof(float));
-    lineBuffer_->release();
 
+    // 视频四边形 VAO：属性绑定封存于独立 VAO，绘制时整体切换
+    vaoQuad_ = std::make_unique<QOpenGLVertexArrayObject>();
+    vaoQuad_->create();
+    vaoQuad_->bind();
     program_->bind();
     program_->enableAttributeArray("aPos");
     program_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 4 * sizeof(float));
     program_->enableAttributeArray("aUv");
     program_->setAttributeBuffer("aUv", GL_FLOAT, 2 * sizeof(float), 2, 4 * sizeof(float));
     program_->release();
+    vaoQuad_->release();
+
+    // 检测框 VAO
+    vaoLines_ = std::make_unique<QOpenGLVertexArrayObject>();
+    vaoLines_->create();
+    vaoLines_->bind();
+    lineProgram_->bind();
+    lineProgram_->enableAttributeArray("aPos");
+    lineProgram_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 2 * sizeof(float));
+    lineProgram_->release();
+    vaoLines_->release();
+
+    vertexBuffer_->release();
+    lineBuffer_->release();
 
     glGenTextures(1, &textureId_);
     glBindTexture(GL_TEXTURE_2D, textureId_);
@@ -172,8 +220,9 @@ void VideoGLWidget::paintGL()
     program_->setUniformValue("tex", 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, textureId_);
-    vertexBuffer_->bind();
+    vaoQuad_->bind();
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    vaoQuad_->release();
     program_->release();
 
     drawDetections(); // 检测框叠加（同视口，归一化坐标直映 NDC）
@@ -191,9 +240,8 @@ void VideoGLWidget::drawDetections()
 
     glLineWidth(2.0F);
     lineProgram_->bind();
-    lineBuffer_->bind();
-    lineProgram_->enableAttributeArray("aPos");
-    lineProgram_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 2 * sizeof(float));
+    vaoLines_->bind();
+    lineBuffer_->bind(); // 供 write() 更新顶点，属性关联由 VAO 持有
 
     for (const Detection& d : dets) {
         // 归一化坐标（图像左上原点）-> NDC（y 轴向上）
@@ -213,6 +261,7 @@ void VideoGLWidget::drawDetections()
     }
 
     lineBuffer_->release();
+    vaoLines_->release();
     lineProgram_->release();
 }
 

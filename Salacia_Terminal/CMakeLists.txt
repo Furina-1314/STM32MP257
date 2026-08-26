@@ -202,6 +202,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
     Qt6::OpenGL Qt6::OpenGLWidgets                    # Phase 3：视频显示
     Qt6::Network                                      # Phase 5：UDP 遥测
+    dbghelp                                         # 崩溃迷你转储（main.cpp）
     Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
     Ort::OnnxRuntime                     # Phase 4：AI 异构推理
     # Phase 4 接入：Ort::OnnxRuntime

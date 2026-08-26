@@ -51,12 +51,19 @@ void UdpReceiver::stop()
     if (!running_.exchange(false, std::memory_order_acq_rel)) {
         return;
     }
-    // 在工作线程内安全关闭 socket/定时器（阻塞等待），再退出线程
-    QMetaObject::invokeMethod(this, &UdpReceiver::cleanupOnWorker,
-                              Qt::BlockingQueuedConnection);
+    // 工作线程自终结（禁 BlockingQueuedConnection），主线程限时阶梯等待
+    QMetaObject::invokeMethod(this, &UdpReceiver::shutdownOnWorker,
+                              Qt::QueuedConnection);
     if (worker_ != nullptr) {
-        worker_->quit();
-        worker_->wait();
+        if (!worker_->wait(3000)) {
+            Logger::error(QString::fromLocal8Bit("遥测：停止超时，请求线程中断"));
+            worker_->requestInterruption();
+            if (!worker_->wait(2000)) {
+                Logger::error(QString::fromLocal8Bit("遥测：线程未响应中断，强制终止"));
+                worker_->terminate();
+                worker_->wait(1000);
+            }
+        }
     }
     DataManager::instance().setTelemetryActive(false);
     Logger::info(QString::fromLocal8Bit("遥测：接收线程已停止"));
@@ -89,7 +96,7 @@ void UdpReceiver::initOnWorker()
                      .arg(AppConfig::instance().mahonyKi()));
 }
 
-void UdpReceiver::cleanupOnWorker()
+void UdpReceiver::shutdownOnWorker()
 {
     if (watchdog_ != nullptr) {
         watchdog_->stop();
@@ -101,6 +108,7 @@ void UdpReceiver::cleanupOnWorker()
         socket_->deleteLater();
         socket_ = nullptr;
     }
+    thread()->quit(); // 自终结事件循环
 }
 
 void UdpReceiver::readPending()

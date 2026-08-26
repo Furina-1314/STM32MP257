@@ -54,7 +54,9 @@ MainWindow::MainWindow(QWidget* parent)
 
     // ---- AI 推理接线（参数解耦：aiEnabled 来自 app_config.ini） ----
     if (AppConfig::instance().aiEnabled()) {
-        aiEngine_ = std::make_unique<OnnxInferEngine>(this);
+        // 红线：Worker-Object 禁止设置父对象，否则 moveToThread 失败、
+        // 对象滞留 GUI 线程（曾导致退出死锁）；生命周期由 unique_ptr 管理
+        aiEngine_ = std::make_unique<OnnxInferEngine>();
 
         connect(aiEngine_.get(), &OnnxInferEngine::backendReady, this,
                 [this](const QString& backend) {
@@ -95,13 +97,24 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // 逆序安全退出：先停网络接收（视频数据面），再停推理线程
-    // （其内部在工作线程释放 ONNX/GPU 上下文），最后进入 GUI 析构
-    pipeline_->stop();
+    // 逆序安全退出：先停视频绘制并排空 GPU（消除 GL/d3d11 驱动层竞态），
+    // 再停网络接收（视频数据面），再停推理线程（其内部在工作线程释放
+    // ONNX/GPU 上下文），最后进入 GUI 析构
+    videoWidget_->releaseGl();
+    pipeline_->stopForExit();
+    pipeline_.release(); // 管线已停流并故意泄漏（TD-8），放弃所有权
     if (aiEngine_ != nullptr) {
         aiEngine_->stop();
     }
     Logger::info(QString::fromLocal8Bit("主窗口关闭：视频管线与推理引擎已停止"));
+
+    // TD-8 规避：退出阶段销毁 QOpenGLWidget 会触发 Intel Iris Xe ICD
+    // 确定性崩溃（igxelpicd64.dll 空函数指针调用，转储证实）。
+    // 资源已在上方全部停止，此处将 GL 部件脱离父子链故意泄漏，
+    // 跳过其析构，进程退出由内核统一回收。
+    videoWidget_->setParent(nullptr);
+    videoWidget_ = nullptr;
+
     event->accept();
 }
 
