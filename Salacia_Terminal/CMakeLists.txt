@@ -1,38 +1,240 @@
-cmake_minimum_required(VERSION 3.16)
-project(Salacia_Terminal LANGUAGES CXX)
+﻿cmake_minimum_required(VERSION 3.20)
 
-include(qt.cmake)
+# =============================================================================
+#  Salacia_Terminal —— 水下机器人（ROV）岸上控制终端
+#
+#  环境红线（禁止未经声明的替代方案）：
+#    - Windows 11 / Visual Studio 2026（MSVC）/ CMake >= 3.20 / Ninja
+#    - GBK 多字节字符集（禁用 Unicode 字符集；源码以 GBK 保存，
+#      与 QString 交互一律 QString::fromLocal8Bit()）
+#    - Qt 6.11.1 / GStreamer 1.20+（RTP-H264 低延迟管线）/ ONNX Runtime C++ API
+#    - C++17；MISRA/CERT 静态分析（Clang-Tidy）；禁裸指针（除第三方 C 库边界）
+# =============================================================================
+
+project(Salacia_Terminal VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
-find_package(Qt${QT_VERSION_MAJOR}
-    COMPONENTS
-        Core
-        Gui
-        Widgets
+# 为 clang-tidy 与 IDE 导出编译数据库
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# -----------------------------------------------------------------------------
+# 1. 静态代码分析：Clang-Tidy（MISRA / CERT）
+# -----------------------------------------------------------------------------
+find_program(CLANG_TIDY_EXE
+    NAMES clang-tidy
+    HINTS
+        "$ENV{VS_LLVM_DIR}"
+        "F:/Microsoft Visual Studio/18/Insiders/VC/Tools/Llvm/x64/bin"
+        "C:/Program Files/LLVM/bin"
+)
+if(CLANG_TIDY_EXE)
+    set(CMAKE_CXX_CLANG_TIDY "${CLANG_TIDY_EXE};-checks=-*,cert-*,misra-*")
+    message(STATUS "Clang-Tidy   : ${CLANG_TIDY_EXE}")
+else()
+    message(WARNING "clang-tidy 未找到，MISRA/CERT 静态分析跳过（安装 LLVM 或 VS 的 Clang 工具集后重新配置即可启用）")
+endif()
+
+# -----------------------------------------------------------------------------
+# 2. Qt 6.11.1
+# -----------------------------------------------------------------------------
+include(qt.cmake) # 兼容宏（Qt >= 6.3 时无实际作用）
+
+find_package(Qt6 6.11.1 REQUIRED COMPONENTS
+    Core
+    Gui
+    Widgets        # 主界面框架（Widgets 红线）
+    Quick          # QML：Quick3D 载体
+    Quick3D        # 3D 舱体姿态实时显示
+    QuickWidgets   # QQuickWidget（Widgets 内嵌 Quick3D 视图）
+    Network        # UDP 传感器接收
+    Concurrent     # 推理 / 通信后台任务
+    OpenGL         # QOpenGLShaderProgram / QOpenGLFunctions
+    OpenGLWidgets  # QOpenGLWidget（视频显示组件）
 )
 qt_standard_project_setup()
 
+# -----------------------------------------------------------------------------
+# 3. GBK 多字节字符集（核心红线）
+#    Qt6 在 Windows 下默认注入 UNICODE/_UNICODE 宏与 -utf-8 编译选项；
+#    通过 Qt6 官方目标属性 QT_NO_UNICODE_DEFINES / QT_NO_UTF8_SOURCE 关闭
+#    （在可执行目标上设置，见第 6 节），并显式声明 _MBCS + GBK 字符集。
+# -----------------------------------------------------------------------------
+if(WIN32)
+    add_compile_definitions(_MBCS) # 对应 VS 项目「多字节字符集」属性
+    if(MSVC)
+        add_compile_options(/source-charset:GBK /execution-charset:GBK)
+    endif()
+endif()
+
+# -----------------------------------------------------------------------------
+# 4. GStreamer 1.20+（RTP/H264 接收、硬件解码、tee GPU 分流）
+#    官方 MSVC 包未提供 CMake config，手动定位头文件与导入库。
+#    注意：glibconfig.h 位于 lib/glib-2.0/include；功能库为短名 gstXXX-1.0.lib。
+# -----------------------------------------------------------------------------
+set(GSTREAMER_ROOT "F:/gstreamer/1.0/msvc_x86_64" CACHE PATH
+    "GStreamer MSVC x86_64 安装根目录")
+
+find_path(GST_GSTREAMER_INCLUDE_DIR gst/gst.h
+    HINTS "${GSTREAMER_ROOT}/include/gstreamer-1.0" REQUIRED)
+find_path(GST_GLIB_INCLUDE_DIR glib.h
+    HINTS "${GSTREAMER_ROOT}/include/glib-2.0" REQUIRED)
+find_path(GST_GLIBCONFIG_INCLUDE_DIR glibconfig.h
+    HINTS "${GSTREAMER_ROOT}/lib/glib-2.0/include" REQUIRED)
+
+find_library(GST_GSTREAMER_LIBRARY gstreamer-1.0 HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_GOBJECT_LIBRARY    gobject-2.0    HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_GLIB_LIBRARY       glib-2.0       HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_BASE_LIBRARY       gstbase-1.0    HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_APP_LIBRARY        gstapp-1.0     HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_VIDEO_LIBRARY      gstvideo-1.0   HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_GL_LIBRARY         gstgl-1.0      HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_RTP_LIBRARY        gstrtp-1.0     HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+find_library(GST_PBUTILS_LIBRARY    gstpbutils-1.0 HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+
+add_library(Gst::GStreamer INTERFACE IMPORTED)
+set_target_properties(Gst::GStreamer PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES
+        "${GST_GSTREAMER_INCLUDE_DIR};${GST_GLIB_INCLUDE_DIR};${GST_GLIBCONFIG_INCLUDE_DIR}"
+    INTERFACE_LINK_LIBRARIES
+        "${GST_GSTREAMER_LIBRARY};${GST_GOBJECT_LIBRARY};${GST_GLIB_LIBRARY}")
+
+# 功能库目标：仅依赖核心目标，按 Phase 逐步接入链接
+function(salacia_add_gst_lib _target _library)
+    add_library(${_target} INTERFACE IMPORTED)
+    set_target_properties(${_target} PROPERTIES
+        INTERFACE_LINK_LIBRARIES "${_library};Gst::GStreamer")
+endfunction()
+
+salacia_add_gst_lib(Gst::Base    "${GST_BASE_LIBRARY}")
+salacia_add_gst_lib(Gst::App     "${GST_APP_LIBRARY}")
+salacia_add_gst_lib(Gst::Video   "${GST_VIDEO_LIBRARY}")
+salacia_add_gst_lib(Gst::GL      "${GST_GL_LIBRARY}")
+salacia_add_gst_lib(Gst::Rtp     "${GST_RTP_LIBRARY}")
+salacia_add_gst_lib(Gst::PbUtils "${GST_PBUTILS_LIBRARY}")
+
+message(STATUS "GStreamer    : ${GSTREAMER_ROOT}")
+
+# -----------------------------------------------------------------------------
+# 5. ONNX Runtime 1.24.4（AI 推理，Phase 4 接入）
+#    多平台 EP 策略，三套 C++ 发行版已安装于 F:/onnxruntime（同版本 1.24.4，
+#    统一 C++ API，避免变体间接口漂移）：
+#      - directml-1.24.4 —— DirectML EP，本机 Intel Iris Xe 核显（默认）
+#      - gpu-1.24.4     —— CUDA/TensorRT EP，NVIDIA RTX 独显平台
+#                          （运行期另需 CUDA Toolkit + cuDNN）
+#      - cpu-1.24.4     —— CPU EP，兜底与调试
+#    切换变体：cmake -DONNXRUNTIME_ROOT=F:/onnxruntime/<变体目录>
+#    （Python 侧 pip 1.29.0 仅用于 .pt -> .onnx 转换，与 C++ 版本无关）
+# -----------------------------------------------------------------------------
+set(ONNXRUNTIME_ROOT "F:/onnxruntime/directml-1.24.4" CACHE PATH
+    "ONNX Runtime C++ 根目录（标准布局：include/ + lib/ + bin/）")
+
+find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h
+    HINTS "${ONNXRUNTIME_ROOT}/include" "${ONNXRUNTIME_ROOT}")
+find_library(ONNXRUNTIME_LIBRARY onnxruntime
+    HINTS "${ONNXRUNTIME_ROOT}/lib" "${ONNXRUNTIME_ROOT}/capi")
+
+if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIBRARY)
+    add_library(Ort::OnnxRuntime INTERFACE IMPORTED)
+    set_target_properties(Ort::OnnxRuntime PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+        INTERFACE_LINK_LIBRARIES "${ONNXRUNTIME_LIBRARY}")
+    message(STATUS "ONNX Runtime : ${ONNXRUNTIME_LIBRARY}")
+else()
+    message(WARNING
+        "ONNX Runtime C++ 开发文件未就绪：ONNXRUNTIME_ROOT 为 pip 目录，"
+        "仅含 onnxruntime.dll（1.29.0，CPU/Azure EP），缺少 onnxruntime_cxx_api.h "
+        "与 onnxruntime.lib。请下载官方 onnxruntime-win-x64[-gpu]-1.29.0 发行包解压后，"
+        "将 ONNXRUNTIME_ROOT 指向该目录。当前不阻断配置，Phase 4 前必须解决。")
+endif()
+
+# -----------------------------------------------------------------------------
+# 6. 可执行目标（Phase 1：Qt Widgets 骨架）
+# -----------------------------------------------------------------------------
 set(PROJECT_SOURCES
-    main.cpp
-    Salacia_Terminal.ui
-    Salacia_Terminal.h
-    Salacia_Terminal.cpp
+    src/main.cpp
+    src/MainWindow.h
+    src/MainWindow.cpp
+    src/core/Logger.h
+    src/core/Logger.cpp
+    src/core/AppConfig.h
+    src/core/AppConfig.cpp
+    src/core/DataManager.h
+    src/core/DataManager.cpp
+    src/utils/RingBuffer.h
+    src/video/VideoFrame.h
+    src/video/GStreamerPipeline.h
+    src/video/GStreamerPipeline.cpp
+    src/widgets/VideoGLWidget.h
+    src/widgets/VideoGLWidget.cpp
+    src/recognition/IModelInfer.h
+    src/recognition/OnnxInferEngine.h
+    src/recognition/OnnxInferEngine.cpp
+    src/communication/TelemetryPacket.h
+    src/communication/UdpReceiver.h
+    src/communication/UdpReceiver.cpp
+    src/sensor/MPU6500Processor.h
+    src/sensor/MPU6500Processor.cpp
+    src/sensor/RovVizModel.h
+    src/sensor/RovVizModel.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 
-set_target_properties(${PROJECT_NAME}
-    PROPERTIES
-        WIN32_EXECUTABLE TRUE
+# LLVM 22 的 clang-tidy 在 MSVC 兼容模式下无法启用异常解析（/EHsc 与
+# -fexceptions 均无效，已实测），唯一使用 try/catch 与 ORT 异常 API 的
+# 翻译单元跳过静态分析；其余源文件维持 cert/misra 检查红线。
+# Quick3D 三维姿态场景（QML 资源）
+qt_add_resources(${PROJECT_NAME} "salacia_qml"
+    PREFIX "/qml"
+    FILES src/qml/RovViz.qml)
+
+set_source_files_properties(src/recognition/OnnxInferEngine.cpp
+    PROPERTIES SKIP_LINTING ON)
+
+# 源码根包含路径（src/ 下跨模块头文件引用，如 "core/Logger.h"）
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+set_target_properties(${PROJECT_NAME} PROPERTIES
+    WIN32_EXECUTABLE TRUE
+    QT_NO_UNICODE_DEFINES TRUE # Qt6：不注入 UNICODE/_UNICODE 宏（GBK 红线）
+    QT_NO_UTF8_SOURCE TRUE     # Qt6：不注入 -utf-8（与 /source-charset:GBK 冲突）
 )
 
-target_link_libraries(${PROJECT_NAME}
-    PUBLIC
-        Qt::Core
-        Qt::Gui
-        Qt::Widgets
+target_link_libraries(${PROJECT_NAME} PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::Quick   # QQuickWindow::setGraphicsApi(OpenGL) RHI 红线（main.cpp）
+    Qt6::OpenGL Qt6::OpenGLWidgets                    # Phase 3：视频显示
+    Qt6::Network                                      # Phase 5：UDP 遥测
+    Qt6::Quick Qt6::QuickWidgets Qt6::Quick3D         # Phase 5：3D 舱体姿态
+    dbghelp                                         # 崩溃迷你转储（main.cpp）
+    Gst::GStreamer Gst::App Gst::Video   # Phase 3：RTP 接收管线
+    Ort::OnnxRuntime                     # Phase 4：AI 异构推理
+    # Phase 4 接入：Ort::OnnxRuntime
+    # Phase 5 接入：Qt6::Quick3D Qt6::Network
+    # Phase 6 接入：Qt6::Concurrent + libssh
 )
 
+# 运行期配置随构建同步到可执行文件目录（开发期直接运行即可找到）
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/app_config.ini"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/app_config.ini"
+)
+
+# ONNX Runtime DLL 随构建拷贝至可执行文件目录：
+# 本机 System32 存在他方安装的旧版 onnxruntime.dll，Windows 加载器
+# System32 优先于 PATH 会造成遮挡；应用目录为最高优先搜索位。
+if(TARGET Ort::OnnxRuntime AND EXISTS "${ONNXRUNTIME_ROOT}/bin")
+    file(GLOB _ort_dlls "${ONNXRUNTIME_ROOT}/bin/*.dll")
+    foreach(_dll ${_ort_dlls})
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_dll}"
+                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
+    endforeach()
+endif()
