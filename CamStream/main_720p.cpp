@@ -23,7 +23,7 @@
  *     启动时生成 stream_720p.sdp, PC 端 ffplay/VLC 按其播放
  *
  * 用法: ./rgb_720p [采集设备] [目标IP] [端口] [码率kbps] [帧率]
- * 默认: /dev/video1 192.168.137.1 5000 3000 30
+ * 默认: /dev/video1 192.168.1.100 5000 3000 30
  * 帧率参数>0 时调节传感器帧间隔(vblank, 按传感器侧 1080p 几何计算,
  * 输出分辨率不影响该公式)并作为流元数据(以实测校准)
  * Ctrl-C 退出并清理资源.
@@ -70,7 +70,7 @@
 #define SENSOR_HEIGHT   1080
 #define OUT_WIDTH       1280              // postproc 缩放输出 = 采集/GPU/编码分辨率
 #define OUT_HEIGHT      720               // (内核按 2x2 块处理, 要求为偶数)
-#define DEST_IP         "192.168.137.1"   // 接收主机IP
+#define DEST_IP         "192.168.1.100"   // 接收主机IP
 #define DEST_PORT       5000
 #define BITRATE_KBPS    3000              // H264 目标码率(720p30 足够, 小码流利于低延迟)
 #define DEFAULT_FPS     30                // 默认帧率
