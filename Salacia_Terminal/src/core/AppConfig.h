@@ -30,7 +30,14 @@ public:
     QString logDir() const { return logDir_; }
     QString logLevel() const { return logLevel_; }
 
-    // ---- [video] ----
+    // ---- [network] ----
+    // UDP 绑定地址（视频/遥测接收；空串 = 0.0.0.0 全接口）
+    QString hostIp() const { return hostIp_; }
+    // 开发板 IP（ssh_host 留空时的指令通道目标；预留板端定向业务）
+    QString boardIp() const { return boardIp_; }
+    // 绑定地址落地校验：configured 是本机实际地址则原样返回；
+    // 否则告警并返回空串（回退 0.0.0.0 全接口，避免绑定失败导致管线错误循环）
+    static QString resolveBindAddress(const QString& configured);
     quint16 videoRtpPort() const { return videoRtpPort_; }
     int jitterLatencyMs() const { return jitterLatencyMs_; }
     QString preferredDecoder() const { return preferredDecoder_; }
@@ -50,7 +57,8 @@ public:
 
     // ---- [rov] ----
     quint16 telemetryPort() const { return telemetryPort_; }
-    QString sshHost() const { return sshHost_; }
+    // SSH 目标主机：[rov] ssh_host 优先，留空回退 [network] board_ip
+    QString sshHost() const;
     quint16 sshPort() const { return sshPort_; }
     QString sshUser() const { return sshUser_; }
     QString sshPassword() const { return sshPassword_; }
@@ -75,8 +83,10 @@ private:
     QString logDir_ = QStringLiteral("logs");
     QString logLevel_ = QStringLiteral("info");
 
+    QString hostIp_;
+    QString boardIp_ = QStringLiteral("192.168.137.2");
     quint16 videoRtpPort_ = 5000;
-    int jitterLatencyMs_ = 20;
+    int jitterLatencyMs_ = 40;
     QString preferredDecoder_ = QStringLiteral("d3d11h264dec");
 
     bool aiEnabled_ = false;
@@ -92,7 +102,7 @@ private:
     quint16 telemetryPort_ = 5001;
     float batteryFullVoltage_ = 16.8F;   // 满电电压（默认 4S 锂电）
     float batteryEmptyVoltage_ = 13.0F;  // 放空电压
-    QString sshHost_ = QStringLiteral("192.168.137.2");
+    QString sshHostOverride_;            // [rov] ssh_host 原值（空 = 用 board_ip）
     quint16 sshPort_ = 22;
     QString sshUser_ = QStringLiteral("root");
     QString sshPassword_;

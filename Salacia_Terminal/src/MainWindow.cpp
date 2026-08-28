@@ -204,12 +204,12 @@ QWidget* MainWindow::createStatusDock()
             return; // 20Hz 数据 -> 5Hz 表单
         }
         lastPanelMs_ = now;
-        rollLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->rollDeg(), 0, 'f', 1));
-        pitchLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->pitchDeg(), 0, 'f', 1));
-        yawLabel_->setText(QString::fromLatin1("%1 °").arg(rovViz_->yawDeg(), 0, 'f', 1));
-        tempLabel_->setText(QString::fromLatin1("%1 °C").arg(rovViz_->cabinTempC(), 0, 'f', 1));
+        rollLabel_->setText(QString::fromLocal8Bit("%1 °").arg(rovViz_->rollDeg(), 0, 'f', 1));
+        pitchLabel_->setText(QString::fromLocal8Bit("%1 °").arg(rovViz_->pitchDeg(), 0, 'f', 1));
+        yawLabel_->setText(QString::fromLocal8Bit("%1 °").arg(rovViz_->yawDeg(), 0, 'f', 1));
+        tempLabel_->setText(QString::fromLocal8Bit("%1 °C").arg(rovViz_->cabinTempC(), 0, 'f', 1));
         humidLabel_->setText(QString::fromLatin1("%1 %RH").arg(rovViz_->cabinHumidityPct(), 0, 'f', 1));
-        batteryLabel_->setText(QString::fromLatin1("%1 %（%2 V）")
+        batteryLabel_->setText(QString::fromLocal8Bit("%1 %（%2 V）")
                                    .arg(rovViz_->batteryPercent(), 0, 'f', 0)
                                    .arg(rovViz_->batteryVoltage(), 0, 'f', 2));
     }, Qt::QueuedConnection);

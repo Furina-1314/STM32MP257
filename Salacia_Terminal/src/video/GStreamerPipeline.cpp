@@ -44,6 +44,7 @@ bool GStreamerPipeline::start()
     // 配置快照（参数解耦红线：全部来自 app_config.ini）
     const AppConfig& cfg = AppConfig::instance();
     port_ = cfg.videoRtpPort();
+    bindAddress_ = AppConfig::resolveBindAddress(cfg.hostIp());
     jitterLatencyMs_ = cfg.jitterLatencyMs();
     preferredDecoder_ = cfg.preferredDecoder();
     aiEnabled_ = cfg.aiEnabled();
@@ -106,11 +107,16 @@ bool GStreamerPipeline::buildAndPlay()
         return false;
     }
 
+    // 绑定地址子句：[network] host_ip 非空时绑定指定网卡（板端定向推流），
+    // 留空 = 0.0.0.0 全接口；接收套接字缓冲 2MB，抗 4Mbps 码流包突发防内核丢包
+    const QString bindClause = bindAddress_.isEmpty()
+            ? QString()
+            : QString::fromLatin1("address=%1 ").arg(bindAddress_);
     QStringList parts;
-    parts << QString::fromLatin1("udpsrc port=%1 "
+    parts << QString::fromLatin1("udpsrc %1port=%2 buffer-size=2097152 "
                                  "caps=application/x-rtp,media=(string)video,"
-                                 "clock-rate=(int)90000,encoding-name=(string)H264,payload=(int)96")
-                 .arg(port_)
+                                 "clock-rate=(int)90000,encoding-name=(string)H264")
+                 .arg(bindClause, QString::number(port_))
           << QString::fromLatin1("rtpjitterbuffer latency=%1 drop-on-latency=true")
                  .arg(jitterLatencyMs_)
           << QString::fromLatin1("rtph264depay ! h264parse")
@@ -186,11 +192,14 @@ bool GStreamerPipeline::buildAndPlay()
     lastFrameMs_.store(0, std::memory_order_release);
     statLastTotal_ = totalFrames_.load(std::memory_order_acquire);
     statLastMs_ = QDateTime::currentMSecsSinceEpoch();
+    startedAtMs_ = statLastMs_;
+    noPacketHintLogged_ = false;
     watchdog_.start();
     running_.store(true, std::memory_order_release);
     emit pipelineStateChanged(true);
 
-    Logger::info(QString::fromLocal8Bit("视频：管线已启动（端口 %1，抖动 %2ms，解码 %3，AI 分支 %4）")
+    Logger::info(QString::fromLocal8Bit("视频：管线已启动（%1:%2，抖动 %3ms，解码 %4，AI 分支 %5）")
+                     .arg(bindAddress_.isEmpty() ? QStringLiteral("0.0.0.0") : bindAddress_)
                      .arg(port_)
                      .arg(jitterLatencyMs_)
                      .arg(decoder)
@@ -249,6 +258,19 @@ void GStreamerPipeline::onWatchdog()
         DataManager::instance().setVideoActive(false);
         scheduleRestart(100);
         return;
+    }
+
+    // 从未收到包：重建无意义（包根本没进来），给一次性的对接排查提示
+    if (running_.load(std::memory_order_acquire) && last == 0 && startedAtMs_ > 0
+        && (now - startedAtMs_) > 5000 && !noPacketHintLogged_) {
+        noPacketHintLogged_ = true;
+        Logger::warning(QString::fromLocal8Bit("视频：启动 %1ms 未收到任何 RTP 包。排查："
+                                               "① Windows 防火墙需放行本程序入站 UDP（端口 %2）；"
+                                               "② 板端 CamStream 推流目标应为 %3:%2（示例：camstream_1080p /dev/video1 %3 %2 4000）；"
+                                               "③ ini [network] host_ip 需与本机网卡实际地址一致（当前 %3，留空=全接口）")
+                            .arg(now - startedAtMs_)
+                            .arg(port_)
+                            .arg(bindAddress_.isEmpty() ? QStringLiteral("192.168.137.1") : bindAddress_));
     }
 
     // 1Hz 统计上报（fps/丢帧/最近帧时刻）

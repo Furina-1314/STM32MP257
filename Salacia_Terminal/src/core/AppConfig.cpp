@@ -3,6 +3,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QNetworkInterface>
 #include <QSettings>
 #include <QStringList>
 
@@ -90,8 +91,10 @@ bool AppConfig::load(const QString& explicitPath)
     logDir_ = ini.value(QStringLiteral("log/dir"), logDir_).toString();
     logLevel_ = ini.value(QStringLiteral("log/level"), logLevel_).toString().toLower();
 
-    // ---- [video] ----
-    videoRtpPort_ = static_cast<quint16>(boundedInt(ini, "video/rtp_port",
+    // ---- [network] ----
+    hostIp_ = ini.value(QStringLiteral("network/host_ip"), hostIp_).toString().trimmed();
+    boardIp_ = ini.value(QStringLiteral("network/board_ip"), boardIp_).toString().trimmed();
+    videoRtpPort_ = static_cast<quint16>(boundedInt(ini, "network/rtp_port",
                                                     videoRtpPort_, 1, 65535));
     jitterLatencyMs_ = boundedInt(ini, "video/jitter_latency_ms",
                                   jitterLatencyMs_, 0, 1000);
@@ -113,13 +116,14 @@ bool AppConfig::load(const QString& explicitPath)
                                    executionProvider_).toString().toLower();
 
     // ---- [rov] ----
-    telemetryPort_ = static_cast<quint16>(boundedInt(ini, "rov/telemetry_port",
+    telemetryPort_ = static_cast<quint16>(boundedInt(ini, "network/telemetry_port",
                                                      telemetryPort_, 1, 65535));
     batteryFullVoltage_ = static_cast<float>(boundedDouble(ini, "rov/battery_full_voltage",
                                                            batteryFullVoltage_, 3.0, 60.0));
     batteryEmptyVoltage_ = static_cast<float>(boundedDouble(ini, "rov/battery_empty_voltage",
                                                             batteryEmptyVoltage_, 3.0, 60.0));
-    sshHost_ = ini.value(QStringLiteral("rov/ssh_host"), sshHost_).toString();
+    sshHostOverride_ = ini.value(QStringLiteral("rov/ssh_host"),
+                                 sshHostOverride_).toString().trimmed();
     sshPort_ = static_cast<quint16>(boundedInt(ini, "rov/ssh_port",
                                                sshPort_, 1, 65535));
     sshUser_ = ini.value(QStringLiteral("rov/ssh_user"), sshUser_).toString();
@@ -139,12 +143,38 @@ bool AppConfig::load(const QString& explicitPath)
 }
 
 
+QString AppConfig::sshHost() const
+{
+    return sshHostOverride_.isEmpty() ? boardIp_ : sshHostOverride_;
+}
+
+QString AppConfig::resolveBindAddress(const QString& configured)
+{
+    if (configured.isEmpty()) {
+        return QString();
+    }
+    const QList<QHostAddress> locals = QNetworkInterface::allAddresses();
+    for (const QHostAddress& addr : locals) {
+        if (addr == QHostAddress{configured}) {
+            return configured;
+        }
+    }
+    if (Logger::isInitialized()) {
+        Logger::warning(QString::fromLocal8Bit("AppConfig: [network] host_ip=%1 不是本机任何网卡地址"
+                                               "（回退 0.0.0.0 全接口监听；请核对 ICS/NAT 是否启用或修正配置）")
+                            .arg(configured));
+    }
+    return QString();
+}
+
 void AppConfig::logSummary() const
 {
     if (!Logger::isInitialized()) {
         return;
     }
-    Logger::info(QString::fromLocal8Bit("AppConfig: 已加载（视频端口 %1，抖动缓冲 %2ms，解码器 %3，AI=%4 [%5 %6x%7 阈值%8]，遥测端口 %9，SSH %10:%11@%12）")
+    Logger::info(QString::fromLocal8Bit("AppConfig: 已加载（主机 %1，板端 %2，视频端口 %3，抖动缓冲 %4ms，解码器 %5，AI=%6 [%7 %8x%9 阈值%10]，遥测端口 %11，SSH %12:%13@%14）")
+                     .arg(hostIp_.isEmpty() ? QStringLiteral("0.0.0.0") : hostIp_)
+                     .arg(boardIp_)
                      .arg(videoRtpPort_)
                      .arg(jitterLatencyMs_)
                      .arg(preferredDecoder_)
@@ -154,7 +184,7 @@ void AppConfig::logSummary() const
                      .arg(inputHeight_)
                      .arg(confidenceThreshold_)
                      .arg(telemetryPort_)
-                     .arg(sshHost_)
+                     .arg(sshHost())
                      .arg(sshPort_)
                      .arg(sshUser_));
 }

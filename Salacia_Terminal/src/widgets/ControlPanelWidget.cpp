@@ -158,7 +158,7 @@ int ControlPanelWidget::thrusterUs(int channel) const
 void ControlPanelWidget::updateServoLabel(int channel)
 {
     servoRows_[channel - 1].value->setText(
-            QString::fromLatin1("%1¡ã£ü%2 us")
+            QString::fromLocal8Bit("%1¡ã£ü%2 us")
                 .arg(servoRows_[channel - 1].slider->value())
                 .arg(servoUs(channel)));
 }
@@ -168,7 +168,7 @@ void ControlPanelWidget::updateThrusterLabel(int channel)
     const int pct = thrusterRows_[channel - 1].slider->value();
     const QString sign = (pct > 0) ? QStringLiteral("+") : QString();
     thrusterRows_[channel - 1].value->setText(
-            QString::fromLatin1("%1%2%£ü%3 us")
+            QString::fromLocal8Bit("%1%2%£ü%3 us")
                 .arg(sign)
                 .arg(pct)
                 .arg(thrusterUs(channel)));

@@ -71,15 +71,24 @@ void UdpReceiver::stop()
 
 void UdpReceiver::initOnWorker()
 {
-    const quint16 port = AppConfig::instance().telemetryPort();
+    const AppConfig& cfg = AppConfig::instance();
+    const quint16 port = cfg.telemetryPort();
+    // 绑定地址：[network] host_ip 非空且确为本机地址时绑定指定网卡（与视频
+    // 接收一致）；非本机地址/留空 = AnyIPv4 全接口（板端定向单播两者等效）
+    const QString hostIp = AppConfig::resolveBindAddress(cfg.hostIp());
+    const QHostAddress bindAddr = hostIp.isEmpty() ? QHostAddress::AnyIPv4
+                                                   : QHostAddress{hostIp};
 
     socket_ = new QUdpSocket(this); // 父对象已在工作线程
-    if (!socket_->bind(QHostAddress::AnyIPv4, port,
+    if (!socket_->bind(bindAddr, port,
                        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
-        emit receiverError(QString::fromLocal8Bit("遥测端口 %1 绑定失败：%2")
+        emit receiverError(QString::fromLocal8Bit("遥测地址 %1:%2 绑定失败：%3")
+                               .arg(bindAddr.toString())
                                .arg(port)
                                .arg(socket_->errorString()));
-        Logger::error(QString::fromLocal8Bit("遥测：端口 %1 绑定失败").arg(port));
+        Logger::error(QString::fromLocal8Bit("遥测：地址 %1:%2 绑定失败")
+                          .arg(bindAddr.toString())
+                          .arg(port));
         return;
     }
     connect(socket_, &QUdpSocket::readyRead, this, &UdpReceiver::readPending);
@@ -90,10 +99,11 @@ void UdpReceiver::initOnWorker()
     watchdog_->start();
 
     lastPacketMs_.store(0, std::memory_order_release);
-    Logger::info(QString::fromLocal8Bit("遥测：监听 0.0.0.0:%1（Mahony Kp=%2 Ki=%3）")
+    Logger::info(QString::fromLocal8Bit("遥测：监听 %1:%2（Mahony Kp=%3 Ki=%4）")
+                     .arg(bindAddr.toString())
                      .arg(port)
-                     .arg(AppConfig::instance().mahonyKp())
-                     .arg(AppConfig::instance().mahonyKi()));
+                     .arg(cfg.mahonyKp())
+                     .arg(cfg.mahonyKi()));
 }
 
 void UdpReceiver::shutdownOnWorker()
