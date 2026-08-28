@@ -11,8 +11,33 @@
  *   input : RGB24, 每像素 3 字节 (R,G,B), 行跨距 in_stride (V4L2 bytesperline)
  *   output: NV12, Y 平面 (height 行, 每行 y_stride 字节) 后紧跟
  *           交错 UV 平面 (height/2 行, 每行 y_stride 字节, U V U V ...)
+ *
+ * 色彩空间: 默认 BT.601 limited range; 编译选项 -DUSE_BT709 切换为
+ * BT.709 limited range(1920x1080 的标准), 与 GStreamer caps
+ * colorimetry=bt709 配套使用(只经 --colorimetry bt709 一并启用).
  */
 
+#ifdef USE_BT709
+// BT.709 limited range (1080p 标准; 整数系数与 BT.601 同风格:
+// Y 系数和 220, U/V 系数和 0)
+inline int rgb_to_y(int r, int g, int b)
+{
+    // Y = (47R + 157G + 16B + 128) >> 8 + 16
+    return ((47 * r + 157 * g + 16 * b + 128) >> 8) + 16;
+}
+
+inline int rgb_to_u(int r, int g, int b)
+{
+    // U(Cb) = (-26R - 87G + 112B + 128) >> 8 + 128
+    return ((-26 * r - 87 * g + 112 * b + 128) >> 8) + 128;
+}
+
+inline int rgb_to_v(int r, int g, int b)
+{
+    // V(Cr) = (112R - 102G - 10B + 128) >> 8 + 128
+    return ((112 * r - 102 * g - 10 * b + 128) >> 8) + 128;
+}
+#else
 inline int rgb_to_y(int r, int g, int b)
 {
     // Y = (66R + 129G + 25B + 128) >> 8 + 16
@@ -30,6 +55,7 @@ inline int rgb_to_v(int r, int g, int b)
     // V(Cr) = (112R - 94G - 18B + 128) >> 8 + 128
     return ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
 }
+#endif
 
 __kernel void rgb888_to_nv12(
     __global const uchar * restrict input,   // RGB24 输入

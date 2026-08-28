@@ -17,10 +17,14 @@ set(OPENCL_LIBRARIES "/usr/lib/libOpenCL.so.1")
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0)
 
-add_executable(rgb_to_nv12 main.cpp)
+# 双模式: rgb_1080p (1080p@12fps) / rgb_720p (720p@30fps), 共用同一 OpenCL 内核
+add_executable(rgb_1080p main_1080p.cpp)
+add_executable(rgb_720p main_720p.cpp)
 
-target_link_libraries(rgb_to_nv12 ${OPENCL_LIBRARIES} ${GST_LIBRARIES})
-target_include_directories(rgb_to_nv12 PRIVATE ${OPENCL_INCLUDE_DIRS} ${GST_INCLUDE_DIRS})
+foreach(target rgb_1080p rgb_720p)
+    target_link_libraries(${target} ${OPENCL_LIBRARIES} ${GST_LIBRARIES})
+    target_include_directories(${target} PRIVATE ${OPENCL_INCLUDE_DIRS} ${GST_INCLUDE_DIRS})
+endforeach()
 
 # 将内核文件复制到构建目录, 以便程序运行时可以找到
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/rgb_to_nv12.cl
