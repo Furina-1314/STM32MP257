@@ -2,6 +2,7 @@
 #include <gst/video/video.h>
 
 #include <QDateTime>
+#include <QFile>
 #include <QStringList>
 
 #include <chrono>
@@ -48,6 +49,13 @@ bool GStreamerPipeline::start()
     jitterLatencyMs_ = cfg.jitterLatencyMs();
     preferredDecoder_ = cfg.preferredDecoder();
     aiEnabled_ = cfg.aiEnabled();
+    if (aiEnabled_ && !QFile::exists(cfg.modelPath())) {
+        // 模型未就位：整条 AI 分支不建（省 GPU/CPU，帧环不存在也就无溢出丢帧）
+        Logger::warning(QString::fromLocal8Bit("视频：AI 模型缺失（%1），本轮不构建 AI 分支"
+                                               "（模型放置后重启程序生效）")
+                            .arg(cfg.modelPath()));
+        aiEnabled_ = false;
+    }
     aiWidth_ = cfg.inputWidth();
     aiHeight_ = cfg.inputHeight();
 
@@ -278,7 +286,7 @@ void GStreamerPipeline::onWatchdog()
         const quint64 total = totalFrames_.load(std::memory_order_acquire);
         VideoStats stats;
         stats.totalFrames = total;
-        stats.droppedFrames = droppedFrames_.load(std::memory_order_acquire);
+        stats.droppedFrames = displayDropped_.load(std::memory_order_acquire);
         stats.lastFrameTimeMs = last;
         stats.fps = (statLastMs_ > 0)
                 ? (static_cast<double>(total - statLastTotal_) * 1000.0
@@ -287,6 +295,15 @@ void GStreamerPipeline::onWatchdog()
         DataManager::instance().setVideoStats(stats);
         statLastTotal_ = total;
         statLastMs_ = now;
+
+        // AI 帧环溢出单独观察（推理消费不及/引擎未就绪），不与显示丢帧混计
+        const quint64 aiDropped = aiDropped_.load(std::memory_order_acquire);
+        if (aiDropped > statLastAiDropped_) {
+            Logger::warning(QString::fromLocal8Bit("视频：AI 帧环溢出丢帧 +%1（累计 %2，推理消费不及或引擎未就绪）")
+                                .arg(aiDropped - statLastAiDropped_)
+                                .arg(aiDropped));
+            statLastAiDropped_ = aiDropped;
+        }
 
         if (running_.load(std::memory_order_acquire) && last > 0
             && (now - last) <= 2000) {
@@ -395,7 +412,7 @@ void GStreamerPipeline::pullFrameToRing(GstAppSink* sink,
 GstFlowReturn GStreamerPipeline::onDisplaySample(GstAppSink* /*sink*/, gpointer self)
 {
     auto* pipe = static_cast<GStreamerPipeline*>(self);
-    pullFrameToRing(pipe->displaySink_, pipe->displayFrames_, pipe->droppedFrames_);
+    pullFrameToRing(pipe->displaySink_, pipe->displayFrames_, pipe->displayDropped_);
     pipe->lastFrameMs_.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_release);
     pipe->totalFrames_.fetch_add(1, std::memory_order_acq_rel);
     return GST_FLOW_OK;
@@ -404,7 +421,7 @@ GstFlowReturn GStreamerPipeline::onDisplaySample(GstAppSink* /*sink*/, gpointer 
 GstFlowReturn GStreamerPipeline::onAiSample(GstAppSink* /*sink*/, gpointer self)
 {
     auto* pipe = static_cast<GStreamerPipeline*>(self);
-    pullFrameToRing(pipe->aiSink_, pipe->aiFrames_, pipe->droppedFrames_);
+    pullFrameToRing(pipe->aiSink_, pipe->aiFrames_, pipe->aiDropped_);
     return GST_FLOW_OK;
 }
 

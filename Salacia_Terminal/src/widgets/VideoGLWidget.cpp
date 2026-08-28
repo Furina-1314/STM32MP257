@@ -146,11 +146,15 @@ void VideoGLWidget::initializeGL()
     lineBuffer_->bind();
     lineBuffer_->allocate(nullptr, 5 * 2 * sizeof(float));
 
-    // 视频四边形 VAO：属性绑定封存于独立 VAO，绘制时整体切换
+    // 视频四边形 VAO：属性绑定封存于独立 VAO，绘制时整体切换。
+    // setAttributeBuffer 记录的是"当时全局绑定的 GL_ARRAY_BUFFER"——
+    // 必须先把本 VAO 对应的 buffer 绑上，否则属性会指向最后绑定的
+    // lineBuffer_（未初始化内存），四边形退化为不可见（黑屏根因）
     vaoQuad_ = std::make_unique<QOpenGLVertexArrayObject>();
     vaoQuad_->create();
     vaoQuad_->bind();
     program_->bind();
+    vertexBuffer_->bind();
     program_->enableAttributeArray("aPos");
     program_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 4 * sizeof(float));
     program_->enableAttributeArray("aUv");
@@ -158,11 +162,12 @@ void VideoGLWidget::initializeGL()
     program_->release();
     vaoQuad_->release();
 
-    // 检测框 VAO
+    // 检测框 VAO（同理：记录属性前显式绑定 lineBuffer_）
     vaoLines_ = std::make_unique<QOpenGLVertexArrayObject>();
     vaoLines_->create();
     vaoLines_->bind();
     lineProgram_->bind();
+    lineBuffer_->bind();
     lineProgram_->enableAttributeArray("aPos");
     lineProgram_->setAttributeBuffer("aPos", GL_FLOAT, 0, 2, 2 * sizeof(float));
     lineProgram_->release();

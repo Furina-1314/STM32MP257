@@ -99,12 +99,14 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<qint64> lastFrameMs_{0};
     std::atomic<quint64> totalFrames_{0};
-    std::atomic<quint64> droppedFrames_{0};
+    std::atomic<quint64> displayDropped_{0}; // 显示帧环溢出（状态栏"丢帧"数据源）
+    std::atomic<quint64> aiDropped_{0};      // AI 帧环溢出（仅日志观察，不进状态栏）
 
     QTimer watchdog_; // 主线程：2s 无帧自愈 + 1Hz 统计上报
     bool restartScheduled_ = false;
     quint64 statLastTotal_ = 0;
     qint64 statLastMs_ = 0;
+    quint64 statLastAiDropped_ = 0;
     qint64 startedAtMs_ = 0; // 本轮管线启动时刻（无包诊断用）
     bool noPacketHintLogged_ = false;
 

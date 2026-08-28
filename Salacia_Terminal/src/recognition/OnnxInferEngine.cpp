@@ -141,17 +141,21 @@ void OnnxInferEngine::initOnWorker()
 {
     const AppConfig& cfg = AppConfig::instance();
     confThreshold_ = static_cast<float>(cfg.confidenceThreshold());
-    nmsIou_ = cfg.nmsIouThreshold();
+    nmsIou_ = static_cast<float>(cfg.nmsIouThreshold());
 
-    if (!initialize()) {
-        ready_.store(false, std::memory_order_release);
-        return; // engineFailed 已在 initialize 内发出；线程空转待 stop()
-    }
-
+    // 排空定时器必须无条件启动（含加载失败）：pollFrames 内部有 ready_ 门控，
+    // 失败时仅持续丢弃帧环中的积压帧。若失败即不起定时器，AI 帧环（容量 4）
+    // 将永远无人消费 -> 生产端每帧环满丢弃，状态栏丢帧数满速率上涨
+    //（真机对接期"全部丢帧"假象的根因）
     pollTimer_ = new QTimer(); // 工作线程内创建（不设父，cleanup 中删除）
     pollTimer_->setInterval(5);
     connect(pollTimer_, &QTimer::timeout, this, &OnnxInferEngine::pollFrames);
     pollTimer_->start();
+
+    if (!initialize()) {
+        ready_.store(false, std::memory_order_release);
+        return; // engineFailed 已在 initialize 内发出；线程排空待 stop()
+    }
 
     ready_.store(true, std::memory_order_release);
     Logger::info(QString::fromLocal8Bit("AI：就绪（%1，输入 %2x%3，阈值 %4，NMS %5）")
