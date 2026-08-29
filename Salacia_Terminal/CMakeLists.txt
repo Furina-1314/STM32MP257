@@ -270,6 +270,20 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/app_config.ini"
 )
 
+# 识别模型随构建分发（models/ 下放置的 .onnx 拷贝至 exe 目录；
+# VS 调试工作目录与 exe 目录不一致，双保险见 AppConfig::resolvedModelPath）
+file(GLOB _salacia_models "${CMAKE_CURRENT_SOURCE_DIR}/models/*.onnx")
+if(_salacia_models)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models"
+    )
+    foreach(_model ${_salacia_models})
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_model}"
+                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/models/")
+    endforeach()
+endif()
+
 # ONNX Runtime DLL 随构建拷贝至可执行文件目录：
 # 本机 System32 存在他方安装的旧版 onnxruntime.dll，Windows 加载器
 # System32 优先于 PATH 会造成遮挡；应用目录为最高优先搜索位。

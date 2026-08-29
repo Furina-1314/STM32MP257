@@ -1,4 +1,4 @@
-ï»¿#include "MainWindow.h"
+#include "MainWindow.h"
 
 #include <QCloseEvent>
 #include <QDateTime>
@@ -30,50 +30,50 @@ MainWindow::MainWindow(QWidget* parent)
     resize(1440, 860);
 
     pipeline_ = std::make_unique<GStreamerPipeline>(this);
-    telemetryReceiver_ = std::make_unique<UdpReceiver>(); // æ— çˆ¶ï¼šWorker çº¢çº¿
+    telemetryReceiver_ = std::make_unique<UdpReceiver>(); // ÎŞ¸¸£ºWorker ºìÏß
 
-    // ---- ä¸­å¤®è§†é¢‘åŒº ----
+    // ---- ÖĞÑëÊÓÆµÇø ----
     videoWidget_ = new VideoGLWidget(this);
     videoWidget_->setSource(&pipeline_->displayFrames());
     setCentralWidget(videoWidget_);
 
-    // ---- å·¦ä¾§æ‰§è¡Œæœºæ„é¥æ§åï¼ˆ16 è·¯ PWMï¼š10 èˆµæœº + 6 æ¨è¿›å™¨ï¼‰ ----
-    sshClient_ = std::make_unique<SshClient>(); // æ— çˆ¶ï¼šWorker çº¢çº¿
+    // ---- ×ó²àÖ´ĞĞ»ú¹¹Ò£¿ØÎë£¨16 Â· PWM£º10 ¶æ»ú + 6 ÍÆ½øÆ÷£© ----
+    sshClient_ = std::make_unique<SshClient>(); // ÎŞ¸¸£ºWorker ºìÏß
     controlPanel_ = new ControlPanelWidget(this);
     connect(controlPanel_, &ControlPanelWidget::pwmCommandRequested, this,
             [this](int deviceId, int pulseUs) {
-                // æ¿ç«¯ CLI çº¦å®šï¼špwm <id> <us>ï¼ˆid 1-10 èˆµæœº / 11-16 æ¨è¿›å™¨ï¼‰
+                // °å¶Ë CLI Ô¼¶¨£ºpwm <id> <us>£¨id 1-10 ¶æ»ú / 11-16 ÍÆ½øÆ÷£©
                 sshClient_->requestCommand(
                         QString::fromLatin1("pwm %1 %2").arg(deviceId).arg(pulseUs));
             });
     connect(controlPanel_, &ControlPanelWidget::emergencyStopRequested, this, [this] {
                 statusBar()->showMessage(
-                        QString::fromLocal8Bit("ç´§æ€¥åœæœºå·²ä¸‹å‘ï¼šæ¨è¿›å™¨ä¸­ä½/èˆµæœºå›ä¸­"), 3000);
+                        QString::fromLocal8Bit("½ô¼±Í£»úÒÑÏÂ·¢£ºÍÆ½øÆ÷ÖĞÎ»/¶æ»ú»ØÖĞ"), 3000);
             });
-    QDockWidget* controlDock = new QDockWidget(QString::fromLocal8Bit("æ‰§è¡Œæœºæ„é¥æ§"), this);
+    QDockWidget* controlDock = new QDockWidget(QString::fromLocal8Bit("Ö´ĞĞ»ú¹¹Ò£¿Ø"), this);
     controlDock->setWidget(controlPanel_);
     controlDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::LeftDockWidgetArea, controlDock);
 
-    // ---- å³ä¾§èˆ±ä½“çŠ¶æ€å ----
+    // ---- ÓÒ²à²ÕÌå×´Ì¬Îë ----
     rovViz_ = new RovVizModel(this);
     rovViz_->bindToDataManager();
-    QDockWidget* dock = new QDockWidget(QString::fromLocal8Bit("èˆ±ä½“çŠ¶æ€"), this);
+    QDockWidget* dock = new QDockWidget(QString::fromLocal8Bit("²ÕÌå×´Ì¬"), this);
     dock->setWidget(createStatusDock());
     dock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
     addDockWidget(Qt::RightDockWidgetArea, dock);
 
-    // ---- çŠ¶æ€æ  ----
-    videoStatsLabel_ = new QLabel(QString::fromLocal8Bit("è§†é¢‘ï¼šç­‰å¾…æµ"), this);
+    // ---- ×´Ì¬À¸ ----
+    videoStatsLabel_ = new QLabel(QString::fromLocal8Bit("ÊÓÆµ£ºµÈ´ıÁ÷"), this);
     statusBar()->addPermanentWidget(videoStatsLabel_);
-    aiStatsLabel_ = new QLabel(QString::fromLocal8Bit("AIï¼šæœªå¯ç”¨"), this);
+    aiStatsLabel_ = new QLabel(QString::fromLocal8Bit("AI£ºÎ´ÆôÓÃ"), this);
     statusBar()->addPermanentWidget(aiStatsLabel_);
-    telemetryLabel_ = new QLabel(QString::fromLocal8Bit("é¥æµ‹ï¼šç­‰å¾…"), this);
+    telemetryLabel_ = new QLabel(QString::fromLocal8Bit("Ò£²â£ºµÈ´ı"), this);
     statusBar()->addPermanentWidget(telemetryLabel_);
-    sshLabel_ = new QLabel(QString::fromLocal8Bit("SSHï¼šè¿æ¥ä¸­"), this);
+    sshLabel_ = new QLabel(QString::fromLocal8Bit("SSH£ºÁ¬½ÓÖĞ"), this);
     statusBar()->addPermanentWidget(sshLabel_);
 
-    // ç®¡çº¿é”™è¯¯ -> çŠ¶æ€æ ï¼ˆæ˜¾å¼ QueuedConnection çº¢çº¿ï¼‰
+    // ¹ÜÏß´íÎó -> ×´Ì¬À¸£¨ÏÔÊ½ QueuedConnection ºìÏß£©
     connect(pipeline_.get(), &GStreamerPipeline::errorOccurred, this,
             [this](const QString& message) { statusBar()->showMessage(message, 5000); },
             Qt::QueuedConnection);
@@ -82,30 +82,30 @@ MainWindow::MainWindow(QWidget* parent)
         const VideoStats s = DataManager::instance().videoStats();
         const bool active = DataManager::instance().videoActive();
         videoStatsLabel_->setText(
-            QString::fromLocal8Bit("è§†é¢‘ï¼š%1 fpsï½œä¸¢å¸§ %2ï½œ%3")
+            QString::fromLocal8Bit("ÊÓÆµ£º%1 fps£ü¶ªÖ¡ %2£ü%3")
                 .arg(s.fps, 0, 'f', 1)
                 .arg(s.droppedFrames)
-                .arg(active ? QString::fromLocal8Bit("åœ¨çº¿")
-                            : QString::fromLocal8Bit("ç¦»çº¿")));
+                .arg(active ? QString::fromLocal8Bit("ÔÚÏß")
+                            : QString::fromLocal8Bit("ÀëÏß")));
     }, Qt::QueuedConnection);
 
     connect(telemetryReceiver_.get(), &UdpReceiver::telemetryActiveChanged, this,
             [this](bool active) {
                 telemetryLabel_->setText(active
-                        ? QString::fromLocal8Bit("é¥æµ‹ï¼šåœ¨çº¿")
-                        : QString::fromLocal8Bit("é¥æµ‹ï¼šç¦»çº¿"));
+                        ? QString::fromLocal8Bit("Ò£²â£ºÔÚÏß")
+                        : QString::fromLocal8Bit("Ò£²â£ºÀëÏß"));
             }, Qt::QueuedConnection);
     connect(telemetryReceiver_.get(), &UdpReceiver::receiverError, this,
             [this](const QString& message) { statusBar()->showMessage(message, 5000); },
             Qt::QueuedConnection);
 
-    // ---- å¯åŠ¨å„æ•°æ®é¢ï¼ˆé…ç½®é—¨æ§ï¼‰ ----
+    // ---- Æô¶¯¸÷Êı¾İÃæ£¨ÅäÖÃÃÅ¿Ø£© ----
     if (!pipeline_->start()) {
-        statusBar()->showMessage(QString::fromLocal8Bit("è§†é¢‘ç®¡çº¿å¯åŠ¨å¤±è´¥ï¼Œè¯¦è§æ—¥å¿—"), 10000);
+        statusBar()->showMessage(QString::fromLocal8Bit("ÊÓÆµ¹ÜÏßÆô¶¯Ê§°Ü£¬Ïê¼ûÈÕÖ¾"), 10000);
     }
     telemetryReceiver_->start();
 
-    // SSH é¥æ§é€šé“ï¼ˆå‚æ•°å…¨éƒ¨æ¥è‡ª ini [rov]ï¼‰
+    // SSH Ò£¿ØÍ¨µÀ£¨²ÎÊıÈ«²¿À´×Ô ini [rov]£©
     {
         SshClient::Settings sshSettings;
         const AppConfig& cfg = AppConfig::instance();
@@ -117,8 +117,8 @@ MainWindow::MainWindow(QWidget* parent)
         sshSettings.reconnectSec = cfg.sshReconnectSec();
         connect(sshClient_.get(), &SshClient::connectionStateChanged, this,
                 [this](bool on) {
-                    sshLabel_->setText(on ? QString::fromLocal8Bit("SSHï¼šåœ¨çº¿")
-                                          : QString::fromLocal8Bit("SSHï¼šç¦»çº¿"));
+                    sshLabel_->setText(on ? QString::fromLocal8Bit("SSH£ºÔÚÏß")
+                                          : QString::fromLocal8Bit("SSH£ºÀëÏß"));
                     controlPanel_->setLinkStatus(on);
                 }, Qt::QueuedConnection);
         connect(sshClient_.get(), &SshClient::clientError, this,
@@ -129,18 +129,18 @@ MainWindow::MainWindow(QWidget* parent)
     }
 
     if (AppConfig::instance().aiEnabled()) {
-        // Worker ä¸€å¾‹æ— çˆ¶åˆ›å»ºï¼ˆmoveToThread çº¢çº¿ï¼‰ï¼›ç”Ÿå‘½å‘¨æœŸç”± unique_ptr ç®¡ç†
+        // Worker Ò»ÂÉÎŞ¸¸´´½¨£¨moveToThread ºìÏß£©£»ÉúÃüÖÜÆÚÓÉ unique_ptr ¹ÜÀí
         aiEngine_ = std::make_unique<OnnxInferEngine>();
 
         connect(aiEngine_.get(), &OnnxInferEngine::backendReady, this,
                 [this](const QString& backend) {
-                    aiStatsLabel_->setText(QString::fromLocal8Bit("AIï¼š%1").arg(backend));
+                    aiStatsLabel_->setText(QString::fromLocal8Bit("AI£º%1").arg(backend));
                 }, Qt::QueuedConnection);
 
         connect(aiEngine_.get(), &OnnxInferEngine::engineFailed, this,
                 [this](const QString& reason) {
-                    aiStatsLabel_->setText(QString::fromLocal8Bit("AIï¼šä¸å¯ç”¨"));
-                    statusBar()->showMessage(QString::fromLocal8Bit("AI å¯åŠ¨å¤±è´¥ï¼š") + reason, 10000);
+                    aiStatsLabel_->setText(QString::fromLocal8Bit("AI£º²»¿ÉÓÃ"));
+                    statusBar()->showMessage(QString::fromLocal8Bit("AI Æô¶¯Ê§°Ü£º") + reason, 10000);
                 }, Qt::QueuedConnection);
 
         connect(&DataManager::instance(), &DataManager::detectionsUpdated, this, [this] {
@@ -151,7 +151,7 @@ MainWindow::MainWindow(QWidget* parent)
             lastAiLabelMs_ = now;
             const std::size_t count = DataManager::instance().detections().size();
             aiStatsLabel_->setText(
-                QString::fromLocal8Bit("AIï¼š%1ï½œ%2msï½œ%3 ç›®æ ‡")
+                QString::fromLocal8Bit("AI£º%1£ü%2ms£ü%3 Ä¿±ê")
                     .arg(aiEngine_->backendName())
                     .arg(aiEngine_->lastInferenceMs())
                     .arg(static_cast<uint>(count)));
@@ -159,13 +159,13 @@ MainWindow::MainWindow(QWidget* parent)
 
         aiEngine_->start(&pipeline_->aiFrames());
     } else {
-        aiStatsLabel_->setText(QString::fromLocal8Bit("AIï¼šOFFï¼ˆé…ç½®å…³é—­ï¼‰"));
+        aiStatsLabel_->setText(QString::fromLocal8Bit("AI£ºOFF£¨ÅäÖÃ¹Ø±Õ£©"));
     }
 }
 
 MainWindow::~MainWindow()
 {
-    // å…œåº•ï¼šstop() å‡å¹‚ç­‰
+    // ¶µµ×£ºstop() ¾ùÃİµÈ
 }
 
 QWidget* MainWindow::createStatusDock()
@@ -173,7 +173,7 @@ QWidget* MainWindow::createStatusDock()
     QWidget* panel = new QWidget(this);
     QVBoxLayout* layout = new QVBoxLayout(panel);
 
-    // ä¸‰ç»´å§¿æ€ï¼ˆQuick3Dï¼ŒOpenGL RHI ç”± main.cpp å…¨å±€å¼ºåˆ¶ï¼‰
+    // ÈıÎ¬×ËÌ¬£¨Quick3D£¬OpenGL RHI ÓÉ main.cpp È«¾ÖÇ¿ÖÆ£©
     QQuickWidget* quick = new QQuickWidget(panel);
     quick->setClearColor(QColor(0x14, 0x19, 0x22));
     quick->rootContext()->setContextProperty(QStringLiteral("rovViz"), rovViz_);
@@ -182,7 +182,7 @@ QWidget* MainWindow::createStatusDock()
     quick->setMinimumHeight(340);
     layout->addWidget(quick, 1);
 
-    // ä¼ æ„Ÿå™¨è¡¨å•ï¼ˆ5Hz èŠ‚æµåˆ·æ–°ï¼‰
+    // ´«¸ĞÆ÷±íµ¥£¨5Hz ½ÚÁ÷Ë¢ĞÂ£©
     QFormLayout* form = new QFormLayout();
     rollLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
     pitchLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
@@ -190,26 +190,26 @@ QWidget* MainWindow::createStatusDock()
     tempLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
     humidLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
     batteryLabel_ = new QLabel(QString::fromLocal8Bit("--"), panel);
-    form->addRow(QString::fromLocal8Bit("æ¨ªæ»š Roll"), rollLabel_);
-    form->addRow(QString::fromLocal8Bit("ä¿¯ä»° Pitch"), pitchLabel_);
-    form->addRow(QString::fromLocal8Bit("èˆªå‘ Yaw"), yawLabel_);
-    form->addRow(QString::fromLocal8Bit("èˆ±å†…æ¸©åº¦"), tempLabel_);
-    form->addRow(QString::fromLocal8Bit("èˆ±å†…æ¹¿åº¦"), humidLabel_);
-    form->addRow(QString::fromLocal8Bit("ç”µæ± ç”µé‡"), batteryLabel_);
+    form->addRow(QString::fromLocal8Bit("ºá¹ö Roll"), rollLabel_);
+    form->addRow(QString::fromLocal8Bit("¸©Ñö Pitch"), pitchLabel_);
+    form->addRow(QString::fromLocal8Bit("º½Ïò Yaw"), yawLabel_);
+    form->addRow(QString::fromLocal8Bit("²ÕÄÚÎÂ¶È"), tempLabel_);
+    form->addRow(QString::fromLocal8Bit("²ÕÄÚÊª¶È"), humidLabel_);
+    form->addRow(QString::fromLocal8Bit("µç³ØµçÁ¿"), batteryLabel_);
     layout->addLayout(form);
 
     connect(rovViz_, &RovVizModel::stateChanged, this, [this] {
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         if ((now - lastPanelMs_) < 200) {
-            return; // 20Hz æ•°æ® -> 5Hz è¡¨å•
+            return; // 20Hz Êı¾İ -> 5Hz ±íµ¥
         }
         lastPanelMs_ = now;
-        rollLabel_->setText(QString::fromLocal8Bit("%1 Â°").arg(rovViz_->rollDeg(), 0, 'f', 1));
-        pitchLabel_->setText(QString::fromLocal8Bit("%1 Â°").arg(rovViz_->pitchDeg(), 0, 'f', 1));
-        yawLabel_->setText(QString::fromLocal8Bit("%1 Â°").arg(rovViz_->yawDeg(), 0, 'f', 1));
-        tempLabel_->setText(QString::fromLocal8Bit("%1 Â°C").arg(rovViz_->cabinTempC(), 0, 'f', 1));
+        rollLabel_->setText(QString::fromLocal8Bit("%1 ¡ã").arg(rovViz_->rollDeg(), 0, 'f', 1));
+        pitchLabel_->setText(QString::fromLocal8Bit("%1 ¡ã").arg(rovViz_->pitchDeg(), 0, 'f', 1));
+        yawLabel_->setText(QString::fromLocal8Bit("%1 ¡ã").arg(rovViz_->yawDeg(), 0, 'f', 1));
+        tempLabel_->setText(QString::fromLocal8Bit("%1 ¡ãC").arg(rovViz_->cabinTempC(), 0, 'f', 1));
         humidLabel_->setText(QString::fromLatin1("%1 %RH").arg(rovViz_->cabinHumidityPct(), 0, 'f', 1));
-        batteryLabel_->setText(QString::fromLocal8Bit("%1 %ï¼ˆ%2 Vï¼‰")
+        batteryLabel_->setText(QString::fromLocal8Bit("%1 %£¨%2 V£©")
                                    .arg(rovViz_->batteryPercent(), 0, 'f', 0)
                                    .arg(rovViz_->batteryVoltage(), 0, 'f', 2));
     }, Qt::QueuedConnection);
@@ -219,23 +219,23 @@ QWidget* MainWindow::createStatusDock()
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
-    // é€†åºå®‰å…¨é€€å‡ºï¼šå…ˆåœè§†é¢‘ç»˜åˆ¶å¹¶æ’ç©º GPUï¼ˆæ¶ˆé™¤ GL/d3d11 é©±åŠ¨å±‚ç«æ€ï¼‰ï¼Œ
-    // å†åœç½‘ç»œæ¥æ”¶ï¼ˆè§†é¢‘æ•°æ®é¢ + é¥æµ‹ï¼‰ï¼Œå†åœæ¨ç†çº¿ç¨‹ï¼ˆå…¶å†…éƒ¨åœ¨å·¥ä½œçº¿ç¨‹
-    // é‡Šæ”¾ ONNX/GPU ä¸Šä¸‹æ–‡ï¼‰ï¼Œæœ€åè¿›å…¥ GUI ææ„
+    // ÄæĞò°²È«ÍË³ö£ºÏÈÍ£ÊÓÆµ»æÖÆ²¢ÅÅ¿Õ GPU£¨Ïû³ı GL/d3d11 Çı¶¯²ã¾ºÌ¬£©£¬
+    // ÔÙÍ£ÍøÂç½ÓÊÕ£¨ÊÓÆµÊı¾İÃæ + Ò£²â£©£¬ÔÙÍ£ÍÆÀíÏß³Ì£¨ÆäÄÚ²¿ÔÚ¹¤×÷Ïß³Ì
+    // ÊÍ·Å ONNX/GPU ÉÏÏÂÎÄ£©£¬×îºó½øÈë GUI Îö¹¹
     videoWidget_->releaseGl();
     pipeline_->stopForExit();
-    pipeline_.release(); // ç®¡çº¿å·²åœæµå¹¶æ•…æ„æ³„æ¼ï¼ˆTD-8ï¼‰ï¼Œæ”¾å¼ƒæ‰€æœ‰æƒ
+    pipeline_.release(); // ¹ÜÏßÒÑÍ£Á÷²¢¹ÊÒâĞ¹Â©£¨TD-8£©£¬·ÅÆúËùÓĞÈ¨
     telemetryReceiver_->stop();
     sshClient_->stop();
     if (aiEngine_ != nullptr) {
         aiEngine_->stop();
     }
-    Logger::info(QString::fromLocal8Bit("ä¸»çª—å£å…³é—­ï¼šè§†é¢‘/é¥æµ‹/SSH/æ¨ç†å·²å…¨éƒ¨åœæ­¢"));
+    Logger::info(QString::fromLocal8Bit("Ö÷´°¿Ú¹Ø±Õ£ºÊÓÆµ/Ò£²â/SSH/ÍÆÀíÒÑÈ«²¿Í£Ö¹"));
 
-    // TD-8 è§„é¿ï¼šé€€å‡ºé˜¶æ®µé”€æ¯ QOpenGLWidget ä¼šè§¦å‘ Intel Iris Xe ICD
-    // ç¡®å®šæ€§å´©æºƒï¼ˆigxelpicd64.dll ç©ºå‡½æ•°æŒ‡é’ˆè°ƒç”¨ï¼Œè½¬å‚¨è¯å®ï¼‰ã€‚
-    // èµ„æºå·²åœ¨ä¸Šæ–¹å…¨éƒ¨åœæ­¢ï¼Œæ­¤å¤„å°† GL éƒ¨ä»¶è„±ç¦»çˆ¶å­é“¾æ•…æ„æ³„æ¼ï¼Œ
-    // è·³è¿‡å…¶ææ„ï¼Œè¿›ç¨‹é€€å‡ºç”±å†…æ ¸ç»Ÿä¸€å›æ”¶ã€‚
+    // TD-8 ¹æ±Ü£ºÍË³ö½×¶ÎÏú»Ù QOpenGLWidget »á´¥·¢ Intel Iris Xe ICD
+    // È·¶¨ĞÔ±ÀÀ££¨igxelpicd64.dll ¿Õº¯ÊıÖ¸Õëµ÷ÓÃ£¬×ª´¢Ö¤Êµ£©¡£
+    // ×ÊÔ´ÒÑÔÚÉÏ·½È«²¿Í£Ö¹£¬´Ë´¦½« GL ²¿¼şÍÑÀë¸¸×ÓÁ´¹ÊÒâĞ¹Â©£¬
+    // Ìø¹ıÆäÎö¹¹£¬½ø³ÌÍË³öÓÉÄÚºËÍ³Ò»»ØÊÕ¡£
     videoWidget_->setParent(nullptr);
     videoWidget_ = nullptr;
 

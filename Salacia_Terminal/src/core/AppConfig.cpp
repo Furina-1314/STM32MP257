@@ -104,6 +104,7 @@ bool AppConfig::load(const QString& explicitPath)
     // ---- [ai] ----
     aiEnabled_ = ini.value(QStringLiteral("ai/enable"), false).toBool();
     modelPath_ = ini.value(QStringLiteral("ai/model_path"), modelPath_).toString();
+    labelFile_ = ini.value(QStringLiteral("ai/label_file"), labelFile_).toString().trimmed();
     inputWidth_ = boundedInt(ini, "ai/input_width", inputWidth_, 16, 8192);
     inputHeight_ = boundedInt(ini, "ai/input_height", inputHeight_, 16, 8192);
     confidenceThreshold_ = boundedDouble(ini, "ai/confidence_threshold",
@@ -146,6 +147,26 @@ bool AppConfig::load(const QString& explicitPath)
 QString AppConfig::sshHost() const
 {
     return sshHostOverride_.isEmpty() ? boardIp_ : sshHostOverride_;
+}
+
+QString AppConfig::resolveNearExecutable(const QString& path)
+{
+    if (path.isEmpty() || QFileInfo::exists(path)) {
+        return path;
+    }
+    const QString nearExe = QCoreApplication::applicationDirPath()
+            + QLatin1Char('/') + path;
+    return QFileInfo::exists(nearExe) ? nearExe : path;
+}
+
+QString AppConfig::resolvedModelPath() const
+{
+    return resolveNearExecutable(modelPath_);
+}
+
+QString AppConfig::resolvedLabelFile() const
+{
+    return resolveNearExecutable(labelFile_);
 }
 
 QString AppConfig::resolveBindAddress(const QString& configured)

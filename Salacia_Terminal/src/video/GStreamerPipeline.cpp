@@ -49,7 +49,7 @@ bool GStreamerPipeline::start()
     jitterLatencyMs_ = cfg.jitterLatencyMs();
     preferredDecoder_ = cfg.preferredDecoder();
     aiEnabled_ = cfg.aiEnabled();
-    if (aiEnabled_ && !QFile::exists(cfg.modelPath())) {
+    if (aiEnabled_ && !QFile::exists(cfg.resolvedModelPath())) {
         // 模型未就位：整条 AI 分支不建（省 GPU/CPU，帧环不存在也就无溢出丢帧）
         Logger::warning(QString::fromLocal8Bit("视频：AI 模型缺失（%1），本轮不构建 AI 分支"
                                                "（模型放置后重启程序生效）")

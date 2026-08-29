@@ -45,6 +45,12 @@ public:
     // ---- [ai] ----
     bool aiEnabled() const { return aiEnabled_; }
     QString modelPath() const { return modelPath_; }
+    // 模型路径落地解析：按原样存在则原样返回；否则尝试 <可执行文件目录>/ 前缀
+    //（VS 调试工作目录与 exe 目录不一致时的回退）
+    QString resolvedModelPath() const;
+    // 类别标签文件（YOLO data.yaml 的 names: 段，或每行一名的纯文本）
+    QString labelFile() const { return labelFile_; }
+    QString resolvedLabelFile() const;
     int inputWidth() const { return inputWidth_; }
     int inputHeight() const { return inputHeight_; }
     double confidenceThreshold() const { return confidenceThreshold_; }
@@ -76,6 +82,7 @@ private:
     AppConfig() = default;
 
     static QString findIniFile(const QString& explicitPath);
+    static QString resolveNearExecutable(const QString& path);
 
     bool loaded_ = false;
 
@@ -91,6 +98,7 @@ private:
 
     bool aiEnabled_ = false;
     QString modelPath_ = QStringLiteral("models/model.onnx");
+    QString labelFile_; // 空 = 无类别名（框仍显示，退化为"类别 N"）
     int inputWidth_ = 640;
     int inputHeight_ = 640;
     double confidenceThreshold_ = 0.5;
