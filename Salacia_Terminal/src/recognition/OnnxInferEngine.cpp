@@ -205,13 +205,14 @@ void OnnxInferEngine::stop()
         // 主线程仅做限时阶梯等待，GUI 永不永久阻塞（安全退出红线）
         QMetaObject::invokeMethod(this, &OnnxInferEngine::shutdownOnWorker,
                                   Qt::QueuedConnection);
-        if (!worker_->wait(3000)) {
+        const AppConfig& cfg = AppConfig::instance();
+        if (!worker_->wait(cfg.workerStopWaitMs())) {
             Logger::error(QString::fromLocal8Bit("AI：停止超时，请求线程中断"));
             worker_->requestInterruption();
-            if (!worker_->wait(2000)) {
+            if (!worker_->wait(cfg.workerInterruptWaitMs())) {
                 Logger::error(QString::fromLocal8Bit("AI：线程未响应中断，强制终止"));
                 worker_->terminate();
-                worker_->wait(1000);
+                worker_->wait(cfg.workerTerminateWaitMs());
             }
         }
     }
@@ -234,7 +235,7 @@ void OnnxInferEngine::initOnWorker()
     // 将永远无人消费 -> 生产端每帧环满丢弃，状态栏丢帧数满速率上涨
     //（真机对接期"全部丢帧"假象的根因）
     pollTimer_ = new QTimer(); // 工作线程内创建（不设父，cleanup 中删除）
-    pollTimer_->setInterval(5);
+    pollTimer_->setInterval(AppConfig::instance().aiPollIntervalMs());
     connect(pollTimer_, &QTimer::timeout, this, &OnnxInferEngine::pollFrames);
     pollTimer_->start();
 

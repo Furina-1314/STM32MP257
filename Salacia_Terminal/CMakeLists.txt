@@ -53,8 +53,17 @@ find_package(Qt6 6.11.1 REQUIRED COMPONENTS
     Concurrent     # 推理 / 通信后台任务
     OpenGL         # QOpenGLShaderProgram / QOpenGLFunctions
     OpenGLWidgets  # QOpenGLWidget（视频显示组件）
+    Test           # QtTest 单元测试（tests/ 子目录）
+    Svg            # FluentUIStyle 样式库依赖
 )
+# FluentUIStyle 在 Qt >= 6.10 使用私有头（样式引擎移植自官方 Win11 样式）
+if(Qt6_VERSION VERSION_GREATER_EQUAL 6.10)
+    find_package(Qt6 REQUIRED COMPONENTS CorePrivate GuiPrivate WidgetsPrivate)
+endif()
 qt_standard_project_setup()
+
+# FluentUIStyle 界面库（复制进仓库的第三方，UTF-8 源；见 src/ui/CMakeLists.txt）
+add_subdirectory(src/ui)
 
 # -----------------------------------------------------------------------------
 # 3. GBK 多字节字符集（核心红线）
@@ -129,39 +138,9 @@ message(STATUS "GStreamer    : ${GSTREAMER_ROOT}")
 #    （Python 侧 pip 1.29.0 仅用于 .pt -> .onnx 转换，与 C++ 版本无关）
 # -----------------------------------------------------------------------------
 # -----------------------------------------------------------------------------
-# 5.5 libssh 0.12.2（Phase 6：SSH 遥控通道；源码编译 MSVC 静态库，
 #     密码学后端复用 GStreamer 自带 OpenSSL 3.5，运行期 DLL 已在 PATH）
 # -----------------------------------------------------------------------------
-set(LIBSSH_ROOT "F:/libssh-0.12.2-msvc" CACHE PATH "libssh MSVC 安装根目录")
-set(libssh_DIR "${LIBSSH_ROOT}/lib/cmake/libssh" CACHE PATH "libssh CMake 配置目录")
 
-find_package(libssh CONFIG QUIET)
-if(TARGET libssh::libssh)
-    set(SALACIA_SSH_LINK "libssh::libssh")
-elseif(TARGET libssh)
-    set(SALACIA_SSH_LINK "libssh")
-else()
-    # 回退：手动定位 ssh.lib + OpenSSL（复用 GStreamer 开发包）
-    find_path(LIBSSH_INCLUDE_DIR libssh/libssh.h HINTS "${LIBSSH_ROOT}/include")
-    find_library(LIBSSH_LIBRARY ssh HINTS "${LIBSSH_ROOT}/lib")
-    find_library(LIBSSH_SSL_LIBRARY ssl HINTS "${GSTREAMER_ROOT}/lib")
-    find_library(LIBSSH_CRYPTO_LIBRARY crypto HINTS "${GSTREAMER_ROOT}/lib")
-    if(LIBSSH_INCLUDE_DIR AND LIBSSH_LIBRARY AND LIBSSH_SSL_LIBRARY AND LIBSSH_CRYPTO_LIBRARY)
-        add_library(LibSsh::Client INTERFACE IMPORTED)
-        set_target_properties(LibSsh::Client PROPERTIES
-            INTERFACE_COMPILE_DEFINITIONS LIBSSH_STATIC
-            INTERFACE_INCLUDE_DIRECTORIES "${LIBSSH_INCLUDE_DIR}"
-            INTERFACE_LINK_LIBRARIES
-                "${LIBSSH_LIBRARY};${LIBSSH_SSL_LIBRARY};${LIBSSH_CRYPTO_LIBRARY};ws2_32;bcrypt;crypt32;iphlpapi;advapi32;shell32")
-        set(SALACIA_SSH_LINK "LibSsh::Client")
-    endif()
-endif()
-
-if(SALACIA_SSH_LINK)
-    message(STATUS "libssh      : ${LIBSSH_ROOT} -> ${SALACIA_SSH_LINK}")
-else()
-    message(WARNING "libssh 未找到（LIBSSH_ROOT='${LIBSSH_ROOT}'），SSH 功能不可用")
-endif()
 
 set(ONNXRUNTIME_ROOT "F:/onnxruntime/directml-1.24.4" CACHE PATH
     "ONNX Runtime C++ 根目录（标准布局：include/ + lib/ + bin/）")
@@ -204,20 +183,41 @@ set(PROJECT_SOURCES
     src/video/GStreamerPipeline.cpp
     src/widgets/VideoGLWidget.h
     src/widgets/VideoGLWidget.cpp
-    src/widgets/ControlPanelWidget.h
-    src/widgets/ControlPanelWidget.cpp
+    src/widgets/CommandPageWidget.h
+    src/widgets/CommandPageWidget.cpp
+    src/widgets/SettingsPageWidget.h
+    src/widgets/SettingsPageWidget.cpp
+    src/widgets/AboutPageWidget.h
+    src/widgets/AboutPageWidget.cpp
+    src/widgets/ControlAreaWidget.h
+    src/widgets/ControlAreaWidget.cpp
+    src/widgets/AlarmBarWidget.h
+    src/widgets/AlarmBarWidget.cpp
     src/recognition/IModelInfer.h
     src/recognition/OnnxInferEngine.h
     src/recognition/OnnxInferEngine.cpp
     src/communication/TelemetryPacket.h
     src/communication/UdpReceiver.h
     src/communication/UdpReceiver.cpp
-    src/communication/SshClient.h
-    src/communication/SshClient.cpp
+    src/communication/WireConstants.h
+    src/communication/WireCodec.h
+    src/communication/WireCodec.cpp
+    src/communication/FunctionRegistry.h
+    src/communication/FunctionRegistry.cpp
+    src/communication/TcpClient.h
+    src/communication/TcpClient.cpp
     src/sensor/MPU6500Processor.h
     src/sensor/MPU6500Processor.cpp
     src/sensor/RovVizModel.h
     src/sensor/RovVizModel.cpp
+    src/sensor/SensorModel.h
+    src/sensor/SensorModel.cpp
+    src/core/AlarmModel.h
+    src/core/AlarmModel.cpp
+    src/core/SafetyStateModel.h
+    src/core/SafetyStateModel.cpp
+    src/control/ControlViewModel.h
+    src/control/ControlViewModel.cpp
 )
 
 qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
@@ -225,14 +225,11 @@ qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 # LLVM 22 的 clang-tidy 在 MSVC 兼容模式下无法启用异常解析（/EHsc 与
 # -fexceptions 均无效，已实测），唯一使用 try/catch 与 ORT 异常 API 的
 # 翻译单元跳过静态分析；其余源文件维持 cert/misra 检查红线。
-if(SALACIA_SSH_LINK)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${SALACIA_SSH_LINK}) # Phase 6：SSH 遥控
-endif()
 
-# Quick3D 三维姿态场景（QML 资源）
+# Quick3D 三维姿态场景（QML 资源；Theme.qml 集中视觉常量）
 qt_add_resources(${PROJECT_NAME} "salacia_qml"
     PREFIX "/qml"
-    FILES src/qml/RovViz.qml)
+    FILES src/qml/RovViz.qml src/qml/Theme.qml)
 
 set_source_files_properties(src/recognition/OnnxInferEngine.cpp
     PROPERTIES SKIP_LINTING ON)
@@ -247,6 +244,8 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+    Salacia::FluentStyle
+    Salacia::Frameless
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -259,7 +258,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Ort::OnnxRuntime                     # Phase 4：AI 异构推理
     # Phase 4 接入：Ort::OnnxRuntime
     # Phase 5 接入：Qt6::Quick3D Qt6::Network
-    # Phase 6 接入：Qt6::Concurrent + libssh
 )
 
 # 运行期配置随构建同步到可执行文件目录（开发期直接运行即可找到）
@@ -295,3 +293,6 @@ if(TARGET Ort::OnnxRuntime AND EXISTS "${ONNXRUNTIME_ROOT}/bin")
                     "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
     endforeach()
 endif()
+
+# 单元测试与 mock A35（Phase 1 引入；置于文件末尾以继承全局 GBK/编译选项作用域）
+add_subdirectory(tests)

@@ -15,6 +15,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/AppConfig.h"
 #include "core/DataManager.h"
 
 namespace salacia {
@@ -73,7 +74,7 @@ VideoGLWidget::VideoGLWidget(QWidget* parent)
 {
     setMinimumSize(QSize(320, 240));
     repaintTimer_ = new QTimer(this);
-    repaintTimer_->setInterval(33); // 约 30Hz 拉取（覆盖 1080p@12 与 720p@30）
+    repaintTimer_->setInterval(AppConfig::instance().videoRenderIntervalMs());
     connect(repaintTimer_, &QTimer::timeout, this, [this] {
         if ((source_ != nullptr) && !source_->empty()) {
             update(); // 仅有新帧时请求重绘
@@ -285,7 +286,7 @@ void VideoGLWidget::drawDetections()
     const auto toNdcY = [&](double ny) { return 1.0 - (offY + ny * dstH) / viewH * 2.0; };
 
     // ---- GL 线框（逐类别独立配色）----
-    glLineWidth(2.0F);
+    glLineWidth(AppConfig::instance().detectLineWidth());
     lineProgram_->bind();
     vaoLines_->bind();
     lineBuffer_->bind(); // 供 write() 更新顶点，属性关联由 VAO 持有
@@ -317,7 +318,7 @@ void VideoGLWidget::drawDetections()
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     QFont font = painter.font();
     font.setBold(true);
-    font.setPointSizeF(9.5); // Qt 点长与 DPI 无关，高分行屏自动缩放
+    font.setPointSizeF(AppConfig::instance().detectLabelFontPt()); // 点长与 DPI 无关
     painter.setFont(font);
     const QFontMetrics metrics(font);
     const int pad = 3;

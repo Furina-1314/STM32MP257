@@ -25,7 +25,7 @@ std::once_flag gGstOnce;
 GStreamerPipeline::GStreamerPipeline(QObject* parent)
     : QObject(parent)
 {
-    watchdog_.setInterval(500);
+    watchdog_.setInterval(AppConfig::instance().videoWatchdogIntervalMs());
     connect(&watchdog_, &QTimer::timeout, this, &GStreamerPipeline::onWatchdog);
 }
 
@@ -116,15 +116,18 @@ bool GStreamerPipeline::buildAndPlay()
     }
 
     // 绑定地址子句：[network] host_ip 非空时绑定指定网卡（板端定向推流），
-    // 留空 = 0.0.0.0 全接口；接收套接字缓冲 2MB，抗 4Mbps 码流包突发防内核丢包
+    // 留空 = 0.0.0.0 全接口；接收套接字缓冲（[video] socket_buffer_bytes，
+    // 抗 4Mbps 码流包突发防内核丢包）
+    const AppConfig& cfg = AppConfig::instance();
     const QString bindClause = bindAddress_.isEmpty()
             ? QString()
             : QString::fromLatin1("address=%1 ").arg(bindAddress_);
     QStringList parts;
-    parts << QString::fromLatin1("udpsrc %1port=%2 buffer-size=2097152 "
+    parts << QString::fromLatin1("udpsrc %1port=%2 buffer-size=%3 "
                                  "caps=application/x-rtp,media=(string)video,"
                                  "clock-rate=(int)90000,encoding-name=(string)H264")
-                 .arg(bindClause, QString::number(port_))
+                 .arg(bindClause, QString::number(port_),
+                      QString::number(cfg.videoSocketBufferBytes()))
           << QString::fromLatin1("rtpjitterbuffer latency=%1 drop-on-latency=true")
                  .arg(jitterLatencyMs_)
           << QString::fromLatin1("rtph264depay ! h264parse")
@@ -259,18 +262,19 @@ void GStreamerPipeline::onWatchdog()
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
     const qint64 last = lastFrameMs_.load(std::memory_order_acquire);
 
-    // 2 秒无帧自愈（自愈红线）
+    // 无帧自愈（自愈红线；阈值/延迟来自 [video]）
+    const AppConfig& cfg = AppConfig::instance();
     if (running_.load(std::memory_order_acquire) && last > 0
-        && (now - last) > 2000) {
-        Logger::warning(QString::fromLocal8Bit("视频：2 秒未收到帧，触发自愈重建"));
+        && (now - last) > cfg.videoStallThresholdMs()) {
+        Logger::warning(QString::fromLocal8Bit("视频：长时间未收到帧，触发自愈重建"));
         DataManager::instance().setVideoActive(false);
-        scheduleRestart(100);
+        scheduleRestart(cfg.videoRestartDelayMs());
         return;
     }
 
     // 从未收到包：重建无意义（包根本没进来），给一次性的对接排查提示
     if (running_.load(std::memory_order_acquire) && last == 0 && startedAtMs_ > 0
-        && (now - startedAtMs_) > 5000 && !noPacketHintLogged_) {
+        && (now - startedAtMs_) > cfg.videoNoPacketHintMs() && !noPacketHintLogged_) {
         noPacketHintLogged_ = true;
         Logger::warning(QString::fromLocal8Bit("视频：启动 %1ms 未收到任何 RTP 包。排查："
                                                "① Windows 防火墙需放行本程序入站 UDP（端口 %2）；"
@@ -281,8 +285,8 @@ void GStreamerPipeline::onWatchdog()
                             .arg(bindAddress_.isEmpty() ? QStringLiteral("192.168.137.1") : bindAddress_));
     }
 
-    // 1Hz 统计上报（fps/丢帧/最近帧时刻）
-    if ((statLastMs_ == 0) || ((now - statLastMs_) >= 1000)) {
+    // 周期统计上报（fps/丢帧/最近帧时刻，[video] stats_interval_ms）
+    if ((statLastMs_ == 0) || ((now - statLastMs_) >= cfg.videoStatsIntervalMs())) {
         const quint64 total = totalFrames_.load(std::memory_order_acquire);
         VideoStats stats;
         stats.totalFrames = total;
@@ -349,13 +353,13 @@ void GStreamerPipeline::handleBusMessage(GstMessage* msg)
         Logger::error(text);
         emit errorOccurred(text);
         DataManager::instance().setVideoActive(false);
-        scheduleRestart(500);
+        scheduleRestart(AppConfig::instance().videoBusRestartDelayMs());
         break;
     }
     case GST_MESSAGE_EOS:
         Logger::warning(QString::fromLocal8Bit("视频：收到 EOS，自愈重建"));
         DataManager::instance().setVideoActive(false);
-        scheduleRestart(500);
+        scheduleRestart(AppConfig::instance().videoBusRestartDelayMs());
         break;
     case GST_MESSAGE_WARNING:
     default:

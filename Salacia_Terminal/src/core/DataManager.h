@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <QMetaType>
 #include <QString>
 
 #include <atomic>
@@ -110,3 +111,6 @@ private:
 };
 
 } // namespace salacia
+
+// 跨线程排队信号传递所需（SensorModel -> DataManager 桥接）
+Q_DECLARE_METATYPE(salacia::RovState)

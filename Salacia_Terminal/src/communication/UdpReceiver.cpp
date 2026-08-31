@@ -13,9 +13,7 @@
 namespace salacia {
 
 namespace {
-// 看门狗：500ms 周期检查，1 秒无有效包判离线（20Hz 下丢 20 包）
-constexpr int kWatchdogIntervalMs = 500;
-constexpr int kTelemetryTimeoutMs = 1000;
+// 判活参数由 [network] telemetry_watchdog_ms / telemetry_stale_ms 提供
 } // namespace
 
 UdpReceiver::UdpReceiver(QObject* parent)
@@ -55,13 +53,14 @@ void UdpReceiver::stop()
     QMetaObject::invokeMethod(this, &UdpReceiver::shutdownOnWorker,
                               Qt::QueuedConnection);
     if (worker_ != nullptr) {
-        if (!worker_->wait(3000)) {
+        const AppConfig& cfg = AppConfig::instance();
+        if (!worker_->wait(cfg.workerStopWaitMs())) {
             Logger::error(QString::fromLocal8Bit("遥测：停止超时，请求线程中断"));
             worker_->requestInterruption();
-            if (!worker_->wait(2000)) {
+            if (!worker_->wait(cfg.workerInterruptWaitMs())) {
                 Logger::error(QString::fromLocal8Bit("遥测：线程未响应中断，强制终止"));
                 worker_->terminate();
-                worker_->wait(1000);
+                worker_->wait(cfg.workerTerminateWaitMs());
             }
         }
     }
@@ -94,7 +93,7 @@ void UdpReceiver::initOnWorker()
     connect(socket_, &QUdpSocket::readyRead, this, &UdpReceiver::readPending);
 
     watchdog_ = new QTimer(this);
-    watchdog_->setInterval(kWatchdogIntervalMs);
+    watchdog_->setInterval(cfg.telemetryWatchdogMs());
     connect(watchdog_, &QTimer::timeout, this, &UdpReceiver::checkWatchdog);
     watchdog_->start();
 
@@ -172,8 +171,9 @@ void UdpReceiver::checkWatchdog()
 {
     const qint64 last = lastPacketMs_.load(std::memory_order_acquire);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 stale = AppConfig::instance().telemetryStaleMs();
 
-    if ((last > 0) && ((now - last) > kTelemetryTimeoutMs)) {
+    if ((last > 0) && ((now - last) > stale)) {
         if (active_.exchange(false, std::memory_order_acq_rel)) {
             DataManager::instance().setTelemetryActive(false);
             emit telemetryActiveChanged(false);

@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "AppConfig.h"
+
 namespace salacia {
 
 std::atomic<bool> Logger::initialized_{false};
@@ -40,6 +42,9 @@ void Logger::init(const QString& logDir)
 
     Logger& logger = instance();
 
+    // 轮转阈值来自 [log] max_file_bytes（init 于 AppConfig 加载后调用）
+    logger.maxFileBytes_ = AppConfig::instance().logMaxFileBytes();
+
     // 文件在移入工作线程前打开，此后由日志线程独占使用（无并发访问）
     logger.openFile(logDir);
 
@@ -65,11 +70,12 @@ void Logger::shutdown()
 
     // 日志线程内：冲刷队列后自退出（非阻塞投递 + 限时阶梯护栏，杜绝死锁）
     QMetaObject::invokeMethod(&logger, "drainAndQuit", Qt::QueuedConnection);
-    if (!logger.workerThread_->wait(3000)) {
+    const AppConfig& cfg = AppConfig::instance();
+    if (!logger.workerThread_->wait(cfg.workerStopWaitMs())) {
         logger.workerThread_->requestInterruption();
-        if (!logger.workerThread_->wait(2000)) {
+        if (!logger.workerThread_->wait(cfg.workerInterruptWaitMs())) {
             logger.workerThread_->terminate();
-            logger.workerThread_->wait(1000);
+            logger.workerThread_->wait(cfg.workerTerminateWaitMs());
         }
     }
 
@@ -151,7 +157,7 @@ void Logger::openFile(const QString& logDir)
 
 void Logger::rotateIfNeeded()
 {
-    if (file_.size() < kMaxLogBytes) {
+    if (file_.size() < maxFileBytes_) {
         return;
     }
 
