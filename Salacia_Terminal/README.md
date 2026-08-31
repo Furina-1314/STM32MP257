@@ -71,13 +71,28 @@ xcopy F:/onnxruntime/directml-1.24.4/bin\*.dll . /Y
 目标机性能基线（Iris Xe 核显 + DirectML，720p@30 推流 + 20Hz 遥测 + 推理并发实测）：
 视频 29.9fps 零丢帧、单帧推理 3ms、整机 CPU 约 1.5%，退出码干净 0x0。
 
+## SSH 运行时移除清单（Phase 5）
+
+原经 SSH（libssh）下发 `pwm <id> <us>` 的遥控通道已于本轮**完全移除**，控制统一走
+Windows↔A35 TCP（见 docs/WINDOWS_A35_INTERFACE.md）：
+
+- 删除 `src/communication/SshClient.h/.cpp`、`src/widgets/ControlPanelWidget.h/.cpp`
+- CMake：libssh 发现/链接块、`SALACIA_SSH_LINK`、相关注释全部移除（不再依赖 `F:/libssh-0.12.2-msvc`）
+- ini：`[rov] ssh_host/ssh_port/ssh_user/ssh_password/ssh_key_path/ssh_reconnect_sec` 作废删除；
+  AppConfig 对应 getter 移除；状态栏 SSH 标签移除
+- 迁移：舵机/推进器控制改经 `[tcp]` 通道（`set servo/propeller` 系列），无回退路径
+
 ## 板端对接协议
 
 ### 1. 视频（板端 CamStream → 终端）
 
-- RTP/H264 over UDP 单播 → 岸机 `:5000`（`[video] rtp_port`），动态 PT=96（clock-rate 90000），MTU 1400
+- RTP/H264 over UDP 单播 → 岸机 `[network] host_ip:rtp_port`（默认 192.168.137.1:5000，ICS NAT 有线模式），动态 PT=96（clock-rate 90000），MTU 1400
 - 分辨率 1920×1080（主用）/ 1280×720，可随流动态切换
 - SPS/PPS 每 1s 带内重发、关键帧间隔 1s → 接收端迟入 ≤1s 自动同步，无需 RTSP
+- 板端启动示例（目标地址 = 主机 IP）：`camstream_1080p /dev/video1 192.168.137.1 5000 4000`（1080p@4Mbps）/ `camstream_720p /dev/video1 192.168.137.1 5000 3000`；**板端默认目标是 192.168.1.100，务必显式传主机 IP**
+- **Windows 防火墙**：首次真机对接需放行终端入站 UDP——环路测试流量不过防火墙，真机板卡流量会被拦，典型症状为完全无画面。放行方式（管理员）：
+  `netsh advfirewall firewall add rule name="Salacia Terminal" dir=in action=allow program="C:\...\Salacia_Terminal.exe" enable=yes`
+- 终端侧接收已加固：2MB 接收套接字缓冲（抗 4Mbps 包突发防内核丢包）、绑定地址可配（`[network] host_ip`，留空=全接口）、5 秒无任何 RTP 包时在日志输出对接排查提示
 
 ### 2. 遥测 v2（板端 → 终端 `:5001`，20Hz）
 
@@ -110,8 +125,28 @@ UDP 定长 **50 字节**、小端、packed：
 | 1–10 | 舵机 | 0~180° 线性映射 [servo_min_us, servo_max_us]（默认 500–2500） |
 | 11–16 | 推进器 | −100~+100% 映射 [thruster_min_us, thruster_max_us]（默认 1100–1900，中位 1500） |
 
-SSH 参数（主机/端口/账号/密码或私钥/重连周期）见 `[rov]` 节；断线周期自动重连，重连成功即清空离线积压指令。
+SSH 参数（端口/账号/密码或私钥/重连周期）见 `[rov]` 节，目标主机 = `[rov] ssh_host`（留空时取 `[network] board_ip`）。网络地址与端口统一在 `[network]` 节配置：`host_ip`（本机 UDP 绑定，也是板端推流目标）、`board_ip`、`rtp_port`、`telemetry_port`。
 紧急停机按钮：推进器全部中位 + 舵机回中，立即下发绕过节拍。
+
+## 界面（FluentUIStyle）
+
+- 浅色/Fluent/FluentUI3 + frameless（QWindowKit）；左侧导航（主页/指令 + 页脚设置/关于）
+- 样式库已复制进 `src/ui/`（MIT；qwindowkit Apache-2.0，许可证随附），**源码统一转 GBK**，
+  无外部路径引用；构建需 Qt 私有头（CorePrivate/GuiPrivate/WidgetsPrivate）
+- 主页：视频（中上）/ Quick3D 姿态 + 传感器卡（右列）/ 控制区（中下：10 舵机 + 6 推进器
+  竖直滑条 + 输入框三态 + 紧急停机/紧急上浮固定区）；顶部告警摘要条
+- 指令页：全部注册函数参数化表单 + 受限原始入口（seq/ACK/耗时/错误结果表）
+- 设置页：主题/配色即时切换（写回 ini）、运行参数摘要、打开配置目录
+
+## 测试
+
+```bat
+cd outuild\debug
+salacia_tests_appconfig.exe & salacia_tests_wire.exe & salacia_tests_registry.exe ^
+  & salacia_tests_sensor.exe & salacia_tests_tcp.exe & salacia_tests_alarm.exe ^
+  & salacia_tests_safety.exe & salacia_tests_controlvm.exe
+```
+八个套件 95 用例（配置校验/帧分帧/注册表/TCP 集成含 mock A35/传感器双源/告警/权限矩阵/控制 VM）。
 
 ## 架构要点（工业级多线程）
 

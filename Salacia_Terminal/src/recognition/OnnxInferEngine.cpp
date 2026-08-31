@@ -5,6 +5,7 @@
 #include "OnnxInferEngine.h"
 
 #include <QFile>
+#include <QTextStream>
 #include <QThread>
 #include <QTimer>
 
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <map>
 #include <utility>
 
 #include "core/AppConfig.h"
@@ -79,6 +81,90 @@ std::vector<Detection> nonMaxSuppression(std::vector<Candidate>& candidates, flo
     return result;
 }
 
+// 类别标签解析：支持 YOLO data.yaml 的 names: 段（"0: human" 字典式 /
+// "- human" 列表式 / "names: [a,b]" 行内式），或无 names: 键的纯文本
+//（每行一个类别名）。返回向量下标即 classId。
+std::vector<QString> loadClassNames(const QString& path)
+{
+    std::vector<QString> names;
+    if (path.isEmpty()) {
+        return names;
+    }
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return names;
+    }
+
+    std::map<int, QString> byIndex;
+    bool sawNamesKey = false;
+    bool inNamesBlock = false;
+    QTextStream stream(&file);
+    while (!stream.atEnd()) {
+        const QString rawLine = stream.readLine();
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
+            continue;
+        }
+        if (!sawNamesKey) {
+            if (line.startsWith(QStringLiteral("names:"))) {
+                sawNamesKey = true;
+                const QString rest = line.mid(6).trimmed();
+                if (rest.startsWith(QLatin1Char('[')) && rest.endsWith(QLatin1Char(']'))) {
+                    const QString inner = rest.mid(1, rest.size() - 2);
+                    const QStringList items = inner.split(QLatin1Char(','));
+                    for (const QString& item : items) {
+                        names.push_back(
+                                item.trimmed().remove(QLatin1Char('"')));
+                    }
+                    return names;
+                }
+                inNamesBlock = true; // 后续缩进行为类别条目
+            }
+            continue;
+        }
+        if (!inNamesBlock) {
+            continue;
+        }
+        if (!rawLine.startsWith(QLatin1Char(' ')) && !rawLine.startsWith(QLatin1Char('\t'))) {
+            break; // 顶格行 = 离开 names 块
+        }
+        if (line.startsWith(QLatin1String("- "))) {
+            names.push_back(line.mid(2).trimmed().remove(QLatin1Char('"')));
+        } else {
+            const int colon = line.indexOf(QLatin1Char(':'));
+            if (colon > 0) {
+                bool ok = false;
+                const int index = line.left(colon).trimmed().toInt(&ok);
+                const QString name = line.mid(colon + 1).trimmed()
+                                             .remove(QLatin1Char('"'));
+                if (ok && (index >= 0) && !name.isEmpty()) {
+                    byIndex[index] = name;
+                }
+            }
+        }
+    }
+
+    if (!byIndex.empty()) {
+        // 字典式按索引展开成连续向量（空洞以空名占位，绘制端回退"类别 N"）
+        const int maxIndex = byIndex.rbegin()->first;
+        names.assign(static_cast<std::size_t>(maxIndex) + 1U, QString());
+        for (const auto& entry : byIndex) {
+            names[static_cast<std::size_t>(entry.first)] = entry.second;
+        }
+    } else if (!sawNamesKey) {
+        // 无 names: 键：视为每行一个类别名的纯文本
+        file.seek(0);
+        QTextStream plain(&file);
+        while (!plain.atEnd()) {
+            const QString line = plain.readLine().trimmed();
+            if (!line.isEmpty() && !line.startsWith(QLatin1Char('#'))) {
+                names.push_back(line);
+            }
+        }
+    }
+    return names;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------- 生命周期
@@ -119,13 +205,14 @@ void OnnxInferEngine::stop()
         // 主线程仅做限时阶梯等待，GUI 永不永久阻塞（安全退出红线）
         QMetaObject::invokeMethod(this, &OnnxInferEngine::shutdownOnWorker,
                                   Qt::QueuedConnection);
-        if (!worker_->wait(3000)) {
+        const AppConfig& cfg = AppConfig::instance();
+        if (!worker_->wait(cfg.workerStopWaitMs())) {
             Logger::error(QString::fromLocal8Bit("AI：停止超时，请求线程中断"));
             worker_->requestInterruption();
-            if (!worker_->wait(2000)) {
+            if (!worker_->wait(cfg.workerInterruptWaitMs())) {
                 Logger::error(QString::fromLocal8Bit("AI：线程未响应中断，强制终止"));
                 worker_->terminate();
-                worker_->wait(1000);
+                worker_->wait(cfg.workerTerminateWaitMs());
             }
         }
     }
@@ -141,17 +228,21 @@ void OnnxInferEngine::initOnWorker()
 {
     const AppConfig& cfg = AppConfig::instance();
     confThreshold_ = static_cast<float>(cfg.confidenceThreshold());
-    nmsIou_ = cfg.nmsIouThreshold();
+    nmsIou_ = static_cast<float>(cfg.nmsIouThreshold());
+
+    // 排空定时器必须无条件启动（含加载失败）：pollFrames 内部有 ready_ 门控，
+    // 失败时仅持续丢弃帧环中的积压帧。若失败即不起定时器，AI 帧环（容量 4）
+    // 将永远无人消费 -> 生产端每帧环满丢弃，状态栏丢帧数满速率上涨
+    //（真机对接期"全部丢帧"假象的根因）
+    pollTimer_ = new QTimer(); // 工作线程内创建（不设父，cleanup 中删除）
+    pollTimer_->setInterval(AppConfig::instance().aiPollIntervalMs());
+    connect(pollTimer_, &QTimer::timeout, this, &OnnxInferEngine::pollFrames);
+    pollTimer_->start();
 
     if (!initialize()) {
         ready_.store(false, std::memory_order_release);
-        return; // engineFailed 已在 initialize 内发出；线程空转待 stop()
+        return; // engineFailed 已在 initialize 内发出；线程排空待 stop()
     }
-
-    pollTimer_ = new QTimer(); // 工作线程内创建（不设父，cleanup 中删除）
-    pollTimer_->setInterval(5);
-    connect(pollTimer_, &QTimer::timeout, this, &OnnxInferEngine::pollFrames);
-    pollTimer_->start();
 
     ready_.store(true, std::memory_order_release);
     Logger::info(QString::fromLocal8Bit("AI：就绪（%1，输入 %2x%3，阈值 %4，NMS %5）")
@@ -243,7 +334,7 @@ QString OnnxInferEngine::appendExecutionProvider(Ort::SessionOptions& options)
 
 bool OnnxInferEngine::initialize()
 {
-    const QString modelPath = AppConfig::instance().modelPath();
+    const QString modelPath = AppConfig::instance().resolvedModelPath();
 
     if (modelPath.isEmpty() || !QFile::exists(modelPath)) {
         const QString reason = QString::fromLocal8Bit("模型文件不存在：%1").arg(modelPath);
@@ -289,6 +380,21 @@ bool OnnxInferEngine::initialize()
 
         Logger::info(QString::fromLocal8Bit("AI：模型已加载（%1，绑定后端 %2）")
                          .arg(modelPath, backendName_));
+
+        // 类别标签（data.yaml / 纯文本）：发布给绘制端；失败仅降级为"类别 N"，不阻断
+        const QString labelFile = AppConfig::instance().resolvedLabelFile();
+        const std::vector<QString> classNames = loadClassNames(labelFile);
+        DataManager::instance().setClassNames(classNames);
+        if (!labelFile.isEmpty() && classNames.empty()) {
+            Logger::warning(QString::fromLocal8Bit("AI：类别标签文件不可读或无 names 段（%1），"
+                                                   "检测框将显示\"类别 N\"")
+                                .arg(labelFile));
+        } else if (!classNames.empty()) {
+            Logger::info(QString::fromLocal8Bit("AI：类别标签已加载（%1 个，来自 %2）")
+                             .arg(classNames.size())
+                             .arg(labelFile));
+        }
+
         emit backendReady(backendName_);
         return true;
     } catch (const Ort::Exception& e) {

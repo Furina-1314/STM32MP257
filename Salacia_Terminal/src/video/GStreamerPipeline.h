@@ -24,7 +24,7 @@ namespace salacia {
 //    投递至主线程处理（errorOccurred/pipelineStateChanged 同理）。
 //
 // 管线（延迟红线）：
-//  udpsrc caps=application/x-rtp,payload=96
+//  udpsrc address=<cfg 可选> buffer-size=2MB caps=application/x-rtp(H264/90000)
 //   ! rtpjitterbuffer latency=<cfg> drop-on-latency=true   // 防抖动丢帧
 //   ! rtph264depay ! h264parse
 //   ! <d3d11h264dec ! d3d11download | avdec_h264>          // 硬解优先
@@ -83,7 +83,8 @@ private:
 
     // 配置快照（start() 时自 AppConfig 读取，重建期间复用）
     quint16 port_ = 5000;
-    int jitterLatencyMs_ = 20;
+    QString bindAddress_;           // [network] host_ip；空 = 0.0.0.0 全接口
+    int jitterLatencyMs_ = 40;
     QString preferredDecoder_;
     int aiWidth_ = 640;
     int aiHeight_ = 640;
@@ -98,12 +99,16 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<qint64> lastFrameMs_{0};
     std::atomic<quint64> totalFrames_{0};
-    std::atomic<quint64> droppedFrames_{0};
+    std::atomic<quint64> displayDropped_{0}; // 显示帧环溢出（状态栏"丢帧"数据源）
+    std::atomic<quint64> aiDropped_{0};      // AI 帧环溢出（仅日志观察，不进状态栏）
 
     QTimer watchdog_; // 主线程：2s 无帧自愈 + 1Hz 统计上报
     bool restartScheduled_ = false;
     quint64 statLastTotal_ = 0;
     qint64 statLastMs_ = 0;
+    quint64 statLastAiDropped_ = 0;
+    qint64 startedAtMs_ = 0; // 本轮管线启动时刻（无包诊断用）
+    bool noPacketHintLogged_ = false;
 
     RingBuffer<VideoFrame, 4> displayFrames_;
     RingBuffer<VideoFrame, 4> aiFrames_;

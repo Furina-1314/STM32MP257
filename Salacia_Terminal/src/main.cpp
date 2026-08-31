@@ -32,7 +32,11 @@ LONG WINAPI writeMiniDump(EXCEPTION_POINTERS* info)
 
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QPalette>
 #include <QtWidgets/QApplication>
+
+#include "fluentui3style.h"
+#include "fluentuiappearance.h"
 
 #include "core/AppConfig.h"
 #include "core/Logger.h"
@@ -52,6 +56,30 @@ int main(int argc, char *argv[])
     // 1) 配置（参数解耦红线：全部可调参数来自 config/app_config.ini）
     salacia::AppConfig& cfg = salacia::AppConfig::instance();
     cfg.load();
+
+    // 1b) FluentUIStyle 界面样式（[ui] style/theme/palette；浅色+Fluent 默认）
+    {
+        const QString& styleName = cfg.uiStyleName();
+        if (styleName.compare(QStringLiteral("FluentUI3"), Qt::CaseInsensitive) == 0) {
+            app.setStyle(new FluentUI3Style());
+            fluentUIAppearance.initialize();
+            fluentUIAppearance.setTheme(cfg.uiTheme() == QStringLiteral("dark")
+                                                 ? Theme::Dark
+                                                 : Theme::Light);
+            // 配色：0 = Fluent，1 = Teams
+            app.setProperty("_q_themestyle",
+                            cfg.uiPalette() == QStringLiteral("teams") ? 1 : 0);
+            // 自定义强调色（空 = 库默认 Fluent 蓝；设置页即时切换并写回）
+            const QString accent = cfg.uiAccentColor();
+            if (!accent.isEmpty()) {
+                QPalette pal = app.palette();
+                const QColor color(accent);
+                pal.setColor(QPalette::Accent, color);
+                pal.setColor(QPalette::Highlight, color);
+                app.setPalette(pal);
+            }
+        }
+    }
 
     // 2) 日志（后台日志线程；目录/级别来自配置；摘要在其后输出）
     salacia::Logger::init(cfg.logDir());
@@ -73,6 +101,7 @@ int main(int argc, char *argv[])
     // 已取崩溃转储证实）。全部自有资源已在上方逆序停止且日志已落盘，
     // 此处直接 ExitProcess 跳过驱动卸载路径（内核回收全部资源）。
     // 静默期：让驱动/GStreamer 残留工作线程排空，避免强杀中途故障
-    ::Sleep(500);
+    //（时长来自 [system] exit_grace_ms）
+    ::Sleep(static_cast<DWORD>(cfg.exitGraceMs()));
     ::ExitProcess(static_cast<UINT>(exitCode));
 }

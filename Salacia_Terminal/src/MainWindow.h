@@ -4,28 +4,32 @@
 
 #include <memory>
 
+class ExWinUINavigationView;
+class FluentTitleBar;
 class QLabel;
+class QPushButton;
 class QQuickWidget;
+class QStackedWidget;
 
 namespace salacia {
 
-class ControlPanelWidget;
+class AboutPageWidget;
+class AlarmBarWidget;
+class CommandPageWidget;
+class AlarmModel;
+class ControlAreaWidget;
+class ControlViewModel;
 class GStreamerPipeline;
 class OnnxInferEngine;
-class SshClient;
-class UdpReceiver;
 class RovVizModel;
+class SafetyStateModel;
+class SensorModel;
+class SettingsPageWidget;
+class TcpClient;
+class UdpReceiver;
 class VideoGLWidget;
 
-// 主窗口（Widgets 框架红线）
-//
-// 结构：中央视频区（含 AI 检测框叠加）；右侧"舱体状态"坞 =
-// Quick3D 三维姿态视图（QQuickWidget，OpenGL RHI 全局强制）+
-// 传感器表单（姿态欧拉角/舱内温湿度/电池电量/遥测状态）；
-// 状态栏常驻视频/AI/遥测三组统计。
-// 生命周期（逆序安全退出红线）：closeEvent 先停视频绘制并排空 GPU，
-// 再停网络接收（视频 + 遥测），再停推理线程（工作线程释放
-// ONNX/GPU 上下文），最后进入 GUI 析构。
+// FluentUIStyle 主窗口（导航页式布局）
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -38,30 +42,53 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private:
-    QWidget* createStatusDock(); // 右侧坞：3D 姿态 + 传感器表单
+    QWidget* createHomePage();
+    void startDataFaces();
+    void connectTcpFace();
+    void requestEmergencyWithConfirm();
 
     std::unique_ptr<GStreamerPipeline> pipeline_;
     std::unique_ptr<UdpReceiver> telemetryReceiver_; // 无父（Worker 红线）
-    std::unique_ptr<SshClient> sshClient_;           // 无父（Worker 红线）
+    std::unique_ptr<TcpClient> tcpClient_;           // 无父（Worker 红线）
+    std::unique_ptr<SensorModel> sensorModel_;       // 主线程数据模型
     std::unique_ptr<OnnxInferEngine> aiEngine_;      // 仅在 aiEnabled 时创建
     RovVizModel* rovViz_ = nullptr;                  // Qt 父子所有权（主线程）
 
-    VideoGLWidget* videoWidget_ = nullptr; // Qt 父子所有权（退出时脱离防 ICD 崩溃）
-    QLabel* videoStatsLabel_ = nullptr;
-    QLabel* aiStatsLabel_ = nullptr;
-    QLabel* telemetryLabel_ = nullptr;
-    QLabel* sshLabel_ = nullptr;
-    ControlPanelWidget* controlPanel_ = nullptr; // Qt 父子所有权
+    std::unique_ptr<AlarmModel> alarmModel_;
+    std::unique_ptr<SafetyStateModel> safety_;
+    std::unique_ptr<ControlViewModel> controlVm_;
 
-    // 传感器表单标签（5Hz 节流刷新）
+    // ---- 窗口骨架 ----
+    FluentTitleBar* titleBar_ = nullptr;
+    ExWinUINavigationView* nav_ = nullptr;
+    QPushButton* navToggleBtn_ = nullptr;
+    QStackedWidget* stack_ = nullptr;
+    AlarmBarWidget* alarmBar_ = nullptr;
+    CommandPageWidget* commandPage_ = nullptr;
+    SettingsPageWidget* settingsPage_ = nullptr;
+    AboutPageWidget* aboutPage_ = nullptr;
+
+    // ---- 主页 ----
+    VideoGLWidget* videoWidget_ = nullptr;
+    QQuickWidget* quick_ = nullptr;
     QLabel* rollLabel_ = nullptr;
     QLabel* pitchLabel_ = nullptr;
     QLabel* yawLabel_ = nullptr;
     QLabel* tempLabel_ = nullptr;
     QLabel* humidLabel_ = nullptr;
     QLabel* batteryLabel_ = nullptr;
+    QLabel* dypLabel_ = nullptr;
+    QLabel* sensorFreshLabel_ = nullptr;
     qint64 lastPanelMs_ = 0;
     qint64 lastAiLabelMs_ = 0;
+
+    ControlAreaWidget* controlArea_ = nullptr;
+
+    // ---- 状态栏 ----
+    QLabel* videoStatsLabel_ = nullptr;
+    QLabel* aiStatsLabel_ = nullptr;
+    QLabel* telemetryLabel_ = nullptr;
+    QLabel* tcpLabel_ = nullptr;
 };
 
 } // namespace salacia

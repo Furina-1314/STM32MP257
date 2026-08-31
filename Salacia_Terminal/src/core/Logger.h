@@ -95,7 +95,7 @@ private:
 
     static std::atomic<bool> initialized_;
 
-    static constexpr qint64 kMaxLogBytes = 10LL * 1024LL * 1024LL; // 单文件 10MB 轮转
+    qint64 maxFileBytes_ = 10LL * 1024LL * 1024LL; // 单文件轮转阈值（[log] max_file_bytes）
 };
 
 } // namespace salacia

@@ -47,6 +47,19 @@ std::vector<Detection> DataManager::detections() const
     return detections_;
 }
 
+void DataManager::setClassNames(const std::vector<QString>& names)
+{
+    // 模型就绪后推理线程写入一次；与 detections 同域锁（UI 读取始终一致配对）
+    const std::unique_lock<std::shared_mutex> lock(detectionsMutex_);
+    classNames_ = names;
+}
+
+std::vector<QString> DataManager::classNames() const
+{
+    const std::shared_lock<std::shared_mutex> lock(detectionsMutex_);
+    return classNames_;
+}
+
 void DataManager::setVideoStats(const VideoStats& stats)
 {
     {

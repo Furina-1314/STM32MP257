@@ -13,9 +13,7 @@
 namespace salacia {
 
 namespace {
-// 看门狗：500ms 周期检查，1 秒无有效包判离线（20Hz 下丢 20 包）
-constexpr int kWatchdogIntervalMs = 500;
-constexpr int kTelemetryTimeoutMs = 1000;
+// 判活参数由 [network] telemetry_watchdog_ms / telemetry_stale_ms 提供
 } // namespace
 
 UdpReceiver::UdpReceiver(QObject* parent)
@@ -55,13 +53,14 @@ void UdpReceiver::stop()
     QMetaObject::invokeMethod(this, &UdpReceiver::shutdownOnWorker,
                               Qt::QueuedConnection);
     if (worker_ != nullptr) {
-        if (!worker_->wait(3000)) {
+        const AppConfig& cfg = AppConfig::instance();
+        if (!worker_->wait(cfg.workerStopWaitMs())) {
             Logger::error(QString::fromLocal8Bit("遥测：停止超时，请求线程中断"));
             worker_->requestInterruption();
-            if (!worker_->wait(2000)) {
+            if (!worker_->wait(cfg.workerInterruptWaitMs())) {
                 Logger::error(QString::fromLocal8Bit("遥测：线程未响应中断，强制终止"));
                 worker_->terminate();
-                worker_->wait(1000);
+                worker_->wait(cfg.workerTerminateWaitMs());
             }
         }
     }
@@ -71,29 +70,39 @@ void UdpReceiver::stop()
 
 void UdpReceiver::initOnWorker()
 {
-    const quint16 port = AppConfig::instance().telemetryPort();
+    const AppConfig& cfg = AppConfig::instance();
+    const quint16 port = cfg.telemetryPort();
+    // 绑定地址：[network] host_ip 非空且确为本机地址时绑定指定网卡（与视频
+    // 接收一致）；非本机地址/留空 = AnyIPv4 全接口（板端定向单播两者等效）
+    const QString hostIp = AppConfig::resolveBindAddress(cfg.hostIp());
+    const QHostAddress bindAddr = hostIp.isEmpty() ? QHostAddress::AnyIPv4
+                                                   : QHostAddress{hostIp};
 
     socket_ = new QUdpSocket(this); // 父对象已在工作线程
-    if (!socket_->bind(QHostAddress::AnyIPv4, port,
+    if (!socket_->bind(bindAddr, port,
                        QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
-        emit receiverError(QString::fromLocal8Bit("遥测端口 %1 绑定失败：%2")
+        emit receiverError(QString::fromLocal8Bit("遥测地址 %1:%2 绑定失败：%3")
+                               .arg(bindAddr.toString())
                                .arg(port)
                                .arg(socket_->errorString()));
-        Logger::error(QString::fromLocal8Bit("遥测：端口 %1 绑定失败").arg(port));
+        Logger::error(QString::fromLocal8Bit("遥测：地址 %1:%2 绑定失败")
+                          .arg(bindAddr.toString())
+                          .arg(port));
         return;
     }
     connect(socket_, &QUdpSocket::readyRead, this, &UdpReceiver::readPending);
 
     watchdog_ = new QTimer(this);
-    watchdog_->setInterval(kWatchdogIntervalMs);
+    watchdog_->setInterval(cfg.telemetryWatchdogMs());
     connect(watchdog_, &QTimer::timeout, this, &UdpReceiver::checkWatchdog);
     watchdog_->start();
 
     lastPacketMs_.store(0, std::memory_order_release);
-    Logger::info(QString::fromLocal8Bit("遥测：监听 0.0.0.0:%1（Mahony Kp=%2 Ki=%3）")
+    Logger::info(QString::fromLocal8Bit("遥测：监听 %1:%2（Mahony Kp=%3 Ki=%4）")
+                     .arg(bindAddr.toString())
                      .arg(port)
-                     .arg(AppConfig::instance().mahonyKp())
-                     .arg(AppConfig::instance().mahonyKi()));
+                     .arg(cfg.mahonyKp())
+                     .arg(cfg.mahonyKi()));
 }
 
 void UdpReceiver::shutdownOnWorker()
@@ -162,8 +171,9 @@ void UdpReceiver::checkWatchdog()
 {
     const qint64 last = lastPacketMs_.load(std::memory_order_acquire);
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 stale = AppConfig::instance().telemetryStaleMs();
 
-    if ((last > 0) && ((now - last) > kTelemetryTimeoutMs)) {
+    if ((last > 0) && ((now - last) > stale)) {
         if (active_.exchange(false, std::memory_order_acq_rel)) {
             DataManager::instance().setTelemetryActive(false);
             emit telemetryActiveChanged(false);

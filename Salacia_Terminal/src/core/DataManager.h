@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QObject>
+#include <QMetaType>
+#include <QString>
 
 #include <atomic>
 #include <cstdint>
@@ -66,6 +68,7 @@ public:
     // ---- 写入（各工作线程） ----
     void setRovState(const RovState& state);                // 遥测线程 20Hz
     void setDetections(const std::vector<Detection>& items); // 推理线程
+    void setClassNames(const std::vector<QString>& names);   // 推理线程，模型就绪后一次
     void setVideoStats(const VideoStats& stats);             // GStreamer 回调线程
     void setVideoActive(bool on);
     void setTelemetryActive(bool on);
@@ -74,6 +77,7 @@ public:
     // ---- 读取（任意线程；UI 高频轮询或信号触发） ----
     RovState rovState() const;
     std::vector<Detection> detections() const;
+    std::vector<QString> classNames() const;
     VideoStats videoStats() const;
     bool videoActive() const { return videoActive_.load(std::memory_order_acquire); }
     bool telemetryActive() const { return telemetryActive_.load(std::memory_order_acquire); }
@@ -96,6 +100,7 @@ private:
 
     mutable std::shared_mutex detectionsMutex_;
     alignas(64) std::vector<Detection> detections_;
+    alignas(64) std::vector<QString> classNames_; // 类别名表（索引 = classId）
 
     mutable std::shared_mutex videoStatsMutex_;
     alignas(64) VideoStats videoStats_;
@@ -106,3 +111,6 @@ private:
 };
 
 } // namespace salacia
+
+// 跨线程排队信号传递所需（SensorModel -> DataManager 桥接）
+Q_DECLARE_METATYPE(salacia::RovState)
