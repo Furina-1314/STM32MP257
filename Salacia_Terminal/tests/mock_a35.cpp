@@ -168,4 +168,3 @@ void MockA35::stopStream()
     streamTimer_.stop();
 }
 
-#include "mock_a35.moc"

@@ -176,7 +176,7 @@ MainWindow::MainWindow(QWidget* parent)
         }
     }, Qt::QueuedConnection);
     connect(safety_.get(), &SafetyStateModel::stateChanged, this, [this] {
-        controlVm_->onHorizontalChanged(safety_->horizontalState() == ModeState::On);
+        controlVm_->onAuthorityStateChanged();
         controlArea_->refreshPermissions();
         commandPage_->refreshModeButtons();
     }, Qt::QueuedConnection);

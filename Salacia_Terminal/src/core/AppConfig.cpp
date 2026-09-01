@@ -134,6 +134,16 @@ bool AppConfig::load(const QString& explicitPath)
     servoCount_ = boundedInt(ini, "control/servo_count", servoCount_, 1, 32);
     thrusterCount_ = boundedInt(ini, "control/thruster_count", thrusterCount_, 1, 32);
     controlIdBase_ = boundedInt(ini, "control/id_base", controlIdBase_, 0, 255);
+    // [弃用] 执行器拓扑以 WireConstants 为唯一权威（舵机 wire 0-9、垂直 10-13、
+    // 水平 14-15）；三键仅为旧 ini 兼容保留，存在即告警，不影响运行时行为
+    if (ini.contains(QStringLiteral("control/servo_count"))
+        || ini.contains(QStringLiteral("control/thruster_count"))
+        || ini.contains(QStringLiteral("control/id_base"))) {
+        Logger::warning(QString::fromLocal8Bit(
+                "control/servo_count、thruster_count、id_base 已弃用："
+                "执行器拓扑以协议常量为准（舵机 wire 0-9，垂直 CH10-13，"
+                "水平 CH14-15）"));
+    }
     servoMinDeg_ = boundedInt(ini, "control/servo_min_deg", servoMinDeg_, 0, 180);
     servoMaxDeg_ = boundedInt(ini, "control/servo_max_deg", servoMaxDeg_, 0, 180);
     servoStepDeg_ = boundedInt(ini, "control/servo_step_deg", servoStepDeg_, 1, 90);
