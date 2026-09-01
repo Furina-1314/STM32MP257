@@ -423,3 +423,180 @@ emergency_confirm = true     ; 紧急上浮二次确认
 ## 11. Phase 0 结论
 
 审计完成，本文件即 Phase 0 交付物。未修改任何业务代码、配置与构建脚本；未执行任何 git 写操作。工作区仅含 2 个未跟踪需求文档（保留）。
+
+---
+
+# 第二轮优化（Phase 12–19）
+
+> 日期：2026-09-01
+> 依据：`docs/VibePrompt.md`（第二轮优化提示词，已复制入项目；与一轮文档/HANDOFF 冲突时以二轮提示词为准）
+> 纪律：每 Phase 完成后停止等待"编译通过/继续"；每次修改及时 commit（范围限定 Salacia_Terminal/，不 push 不 PR）；源码 GBK、Markdown UTF-8；Windows 与 M33 双盲，A35 是唯一协议转换与状态权威；本任务不改 A35/M33/设备树/外部 SDK；代码内禁硬编码、禁绝对路径（Windows 系统文件除外）。
+
+## R.1 一轮终态与二轮差距
+
+| # | 一轮现状 | 二轮目标 | 涉及 |
+|---|---|---|---|
+| D1 | Estop 32B 载荷（10 舵机+6 推进器零值） | Stop/Estop/Emergency 均空载荷、只置零六路推进器、绝不携带/操作舵机 | WireConstants/FunctionRegistry/ControlViewModel/测试/文档 |
+| D2 | 舵机 1–10 / 推进器 1–6 两套 1 基 ID，`id-1` 兼任索引 | 舵机 wire 0–9（UI 1–10）；垂直 10–13；水平 14–15；UI 索引/显示编号/wireId 三分离 | WireConstants/ControlViewModel/ControlAreaWidget |
+| D3 | SafetyStateModel 单一 `ModeState::Pending`；estop/emergency 布尔 | `PendingSwitchState`×7（authoritative/displayedTarget/pendingSeq/pendingDirection/rollbackState/pendingTimestamp） | SafetyStateModel |
+| D4 | StateEvent 0x0102 单字节 4 位掩码 | StateEventV2 0x0104（u8 version + u16 mask，9 位），legacy 0x0102 保留不改位义 | WireConstants/FunctionRegistry/MainWindow/MockA35 |
+| D5 | `canServoIndividual()` 依赖 safe/horizontal/estop/emergency | 舵机权限仅：连接+可发送+参数合法+无同通道 Pending；任何推进器模式不得置灰舵机 | SafetyStateModel/ControlAreaWidget |
+| D6 | 主页"推进器 1–6"六滑条 | 垂直/水平两组；姿态稳定 ON=每组一条基准滑条；OFF=按各组同步状态单条/多条 | ControlAreaWidget |
+| D7 | 无同步开关 | 垂直/水平 Synchronization 开关（主页推进器模块+指令页模式区，同一状态模型） | 新 funcId 0x0024–0x0027 |
+| D8 | 无 Stop/Move 三级开关 | 推进器总使能/垂直推进使能/水平推进使能（ON=Move，OFF=Stop 锁存） | 新 funcId 0x0013–0x0017 |
+| D9 | "Horizontal 姿态补偿"语义混淆（易误解为水平推进器） | 更名"姿态稳定（Horizontal）"=Roll/Pitch 自动调平；Safe 单向联动 | UI/SafetyStateModel |
+| D10 | 指令页无视频 | VideoFrameHub 共享最新帧，指令页左上小视频，单管线单端口 | 新 src/video/VideoFrameHub |
+| D11 | 菜单折叠/告警展开用 topLevel `setGeometry` 恢复几何 | 禁 resize/adjustSize/setFixedSize/showNormal/showMaximized/setGeometry；仅内部布局压缩 | MainWindow/AlarmBarWidget |
+
+## R.2 协议设计定稿
+
+### R.2.1 funcId 分配（集中 WireConstants::Func + FunctionRegistry 全表 + docs/WINDOWS_A35_INTERFACE.md）
+
+| 函数 | funcId | 变更 | 载荷 | 优先级 |
+|---|---|---|---|---|
+| StopAll | 0x0010 | 复用原 Stop，语义=六路推进器置零并进入停止状态 | 空 | 2 |
+| Emergency | 0x0011 | 语义变更：同样仅六路推进器置零，不上浮 | 空 | 1 |
+| Estop | 0x0012 | 载荷 32B→空；与 Stop 执行结果完全相同，仅优先级/GUI 告警等级/日志事件类型不同 | 空 | 0 |
+| MoveAll | 0x0013 | 新增 | 空 | 2 |
+| StopVertical / MoveVertical | 0x0014 / 0x0015 | 新增 | 空 | 2 |
+| StopHorizontal / MoveHorizontal | 0x0016 / 0x0017 | 新增 | 空 | 2 |
+| VerticalSynchronizationOn/Off | 0x0024 / 0x0025 | 新增 | 空 | 5 |
+| HorizontalSynchronizationOn/Off | 0x0026 / 0x0027 | 新增 | 空 | 5 |
+| BaseValueVH | 0x0051 | 新增；0x0050 弃用（注册表保留标记 deprecated，代码不再使用） | 2×i16：垂直基准、水平基准 | 5 |
+| StateEventV2 | 0x0104 | 新增；0x0102 legacy 保留原位义 | u8 version=2 + u16 mask | 事件 |
+
+优先级常量：`kPriorityEstop=0`、`kPriorityEmergency=1`、`kPriorityStopMove=2`、`kPriorityNormal=5`；紧急队列（priority<5）改为按优先级稳定排序插入、永不丢弃，保证 `Estop > Emergency > Stop/Move > 普通控制` 插队次序。
+
+### R.2.2 StateEventV2（0x0104）
+
+```
+u8  version = 2
+u16 mask（小端）：
+  bit0 safe                      bit1 attitudeStabilization
+  bit2 globalStopped             bit3 verticalStopped
+  bit4 horizontalStopped         bit5 verticalSynchronization
+  bit6 horizontalSynchronization bit7 estop
+  bit8 emergency
+```
+
+- stopped 位=1 表示该组停止锁存；UI"使能"开关显示取反值（globalStopped=0 → 总使能 ON）。
+- 未知位（bit9–15 置位）整帧拒绝，与 legacy 行为一致。
+- legacy 0x0102 继续可解码（旧 4 位含义不动），作为兼容回退；主链路切换 V2，MockA35 默认发 V2。
+
+### R.2.3 执行器 ID（UI 索引 / 显示编号 / wireId 三分离）
+
+| 类别 | wireId | UI 编号 | 标签 |
+|---|---|---|---|
+| 舵机×10 | 0–9 | 1–10 | 舵机1（CH0）… 舵机10（CH9） |
+| 垂直推进器×4 | 10–13 | 1–4 | 垂直1（CH10）… 垂直4（CH13） |
+| 水平推进器×2 | 14–15 | 1–2 | 水平1（CH14）、水平2（CH15） |
+
+- 拓扑常量集中 WireConstants：`kServoCount=10`、`kServoIdFirst=0`、`kVerticalCount=4`、`kVerticalIdFirst=10`、`kHorizontalCount=2`、`kHorizontalIdFirst=14`、`kThrusterCount=6`、`kIdBroadcast=0xFF`。
+- ServoSet/Get/Mid：id∈[0,9]；"全部"统一 `kIdBroadcast=0xFF`（ServoSetAll 仍独立 funcId 带 u16 angle）。PropellerSet：id∈[10,15]；PropellerStop：0xFF=全部。非法 ID 编码返回空 QByteArray（拒绝发送）。
+- AppConfig `[control] servo_count/thruster_count/id_base` 弃用：读取时 Logger 告警，拓扑以 WireConstants 为准（ini 键保留兼容不删）。
+- Windows 只把这些 ID 视为 Windows↔A35 协议规范 ID，不引用不解析 M33 协议。
+
+## R.3 PendingSwitchState（SafetyStateModel 重写核心）
+
+7 个事务开关共享：Safe、姿态稳定（AttitudeStabilization）、推进器总使能、垂直使能、水平使能、垂直同步、水平同步。estop/emergency 仍为 StateEventV2 权威布尔（无本地事务）。
+
+```
+struct PendingSwitchState {
+    ModeState authoritative;    // 最近一次 A35 确认（On/Off/Unknown）
+    bool     pending;           // 事务进行中
+    bool     displayedTarget;   // Pending 期间立即显示的目标
+    quint16  pendingSeq;
+    int      pendingDirection;  // ToOn / ToOff
+    bool     rollbackState;     // 发起时权威值（回退目标）
+    qint64   pendingTimestampMs;
+};
+```
+
+事务规则（7 开关一致，逐条对应二轮提示词 §三）：
+1. 点击 → displayedTarget=目标、pending=true、禁重复点击、ProgressRing 显示；
+2. 成功 ACK → authoritative=目标、pending=false、Ring 隐藏；
+3. 失败 ACK/超时 → 回退 displayedTarget=rollback、pending=false、Ring 隐藏、窗口级 ExInfoBar + AlarmModel + 日志（funcId/SEQ/目标状态/错误原因）；
+4. 断线 → pending 全清、authoritative=Unknown（显示"状态未知"，保守禁用推进器；舵机按 §R.6 权限不受影响）；
+5. StateEvent 先于 ACK 到达 → 以 StateEvent 为权威、清对应 pending；
+6. 成功 ACK 后 StateEvent 给出相反状态 → StateEvent 覆盖 + 协议状态不一致告警。
+
+## R.4 Safe ↔ 姿态稳定联动
+
+- GUI 更名"姿态稳定（Horizontal）"；业务含义=ROV Roll/Pitch 自动调平，不代表 CH14–CH15 水平推进器。
+- Safe 定义（A35 侧保护策略，Windows 不做安全权威）：Safe 不是 Stop/Emergency，不控制舵机，不自动置零推进器；在姿态稳定基础上执行边界检查/限幅/拒绝，最终裁决由 A35 负责。
+- 联动规则（单向）：
+  - SafeOn 仅发一条业务级 0x0020，Windows 不自行拼接两条命令；
+  - GUI 将 Safe 与姿态稳定同时显示为目标 ON（双 Pending、双 Ring）；
+  - A35 原子保证姿态稳定开启后再确认 Safe 成功；成功双 ON；失败双回退到原权威状态；
+  - Safe ON 期间姿态稳定开关保持 ON+禁用+说明"Safe 模式要求姿态稳定开启"；SafeOff 只关 Safe，姿态稳定保持 ON 恢复可操作；
+  - Safe ON 不锁死舵机与推进器提交：舵机始终可操作；推进器仍可提交控制请求，A35 限幅/拒绝时按返回结果更新确认值、回退并提示；
+  - 非法权威组合 `Safe=ON + Stabilization=OFF` → 锁定推进器控制 + 高等级告警，Windows 端不悄悄修正。
+
+## R.5 推进器布局（纯逻辑判定函数，UI 只做显隐）
+
+```
+姿态稳定 ON  → 垂直组 1 条基准滑条 + 水平组 1 条基准滑条（BaseValueVH 双值）
+姿态稳定 OFF → 每组按自身 Synchronization 独立判定：
+    垂直同步 ON → 垂直组 1 条同步滑条；OFF → 垂直1–4 四条独立滑条
+    水平同步 ON → 水平组 1 条同步滑条；OFF → 水平1–2 两条独立滑条
+```
+
+- 姿态稳定 ON 时两组同步开关仍显示权威状态、允许切换（事务正常），布局保持"一组一条"并显示提示"姿态稳定模式下使用统一基准，Synchronization 状态将在退出姿态稳定后决定布局"。
+- 所有滑条保留 目标值/已发送值/A35 确认值 三态；限频、松手立即冲刷、断线不重放规则不变。
+- Unknown（同步/稳定状态未知）→ 保守显示独立滑条并禁用推进器控制，不显示为已关闭。
+
+## R.6 Stop/Move 三级使能与权限矩阵
+
+- 开关：推进器总使能（MoveAll/StopAll）、垂直推进使能（MoveVertical/StopVertical）、水平推进使能（MoveHorizontal/StopHorizontal）；ON=允许运动，OFF=停止锁存，不暴露"Stop ON"反向语义；主页与指令页展示并实时同步（同一 SafetyStateModel）。
+- 推进器实际可操作 = TCP 已连接 + 权威状态已知 + 总使能 ON + 对应分组使能 ON + 相关开关不处于 Pending。
+- 总使能 OFF 或 PendingToOff → 全部推进器滑条与输入框立即置灰；垂直/水平分组开关保留权威显示但禁止发起 Move；舵机保持可操作。
+- 总使能重新 ON → 仅恢复未被分组 Stop 锁定的组；不自动恢复或重发旧推进器目标（清逐路待发）。
+- 垂直使能 OFF 只置灰垂直组；水平使能 OFF 只置灰水平组。
+- Stop/Move 不改变 Safe、姿态稳定、Synchronization、舵机状态。
+- 舵机可操作条件（与一切推进器模式解耦）：TCP 连接存在 + 命令可发送 + 通道/角度参数合法 + 当前通道无冲突 Pending。
+
+## R.7 视频复用 VideoFrameHub
+
+- 新增 `src/video/VideoFrameHub`：单帧槽（互斥锁 + 帧拷贝发布），GStreamerPipeline 显示 appsink 回调发布最新 BGRA 帧，覆盖旧帧不积压，GUI 线程永不阻塞；主页与指令页两个 VideoGLWidget 实例各自按 33ms 节拍快照渲染，不竞争 RingBuffer。
+- AI 分支 RingBuffer 链路不动；仅一个 GStreamerPipeline、一个 UDP 视频接收源、一套解码流程（不变式）。
+- 指令页左上小视频：独立小尺寸 VideoGLWidget 实例（不共享 QWidget 父对象）、保持宽高比不拉伸、检测框按归一化坐标缩放、无画面显示离线/等待提示；页面切换不停止/重启/重建管线。
+
+## R.8 窗口尺寸硬性要求
+
+- 菜单折叠（MainWindow）与告警栏展开/收起（AlarmBarWidget）删除全部顶层窗口 setGeometry/resize 类调用；只允许改变窗口内部布局（告警面板限高 + 内容区 stretch 压缩）。
+- 验收：普通窗口展开/收起前后顶层 geometry 不变；最大化状态恒 `isMaximized()==true`；不出现恢复普通窗口、窗口跳动、尺寸逐次增长；不依赖固定屏幕坐标（DPI/多屏安全）。
+
+## R.9 Phase 计划（每 Phase：实现 → 测试 → Debug 构建 0 新警告 → commit → 停止等编译确认）
+
+| Phase | 内容 | 主要交付 |
+|---|---|---|
+| 12 | 计划文档 | 本节总设计 + docs/VibePrompt.md 复制入库 |
+| 13 | 协议层 | WireConstants/FunctionRegistry：新 funcId、ID 拓扑常量与映射助手、StateEventV2/BaseValueVH 编解码、Estop 空载荷（删 32B）、Stop/Move 优先级、紧急队列按优先级排序；受影响调用点编译适配；test_wirecodec/test_registry 更新 |
+| 14 | 状态模型 | SafetyStateModel 重写（R.3/R.4/R.6 全部规则与权限）；MainWindow 消费 StateEventV2；MockA35 增加 V2 注入并设默认；test_safetystate 重写扩展 + test_phase6 权限矩阵更新 |
+| 15 | ControlViewModel | 垂直/水平分组通道 + wire 映射、双基准值、Stop/Move 请求、锁存置灰与不重放、estop 空载荷调用点；布局判定纯逻辑；test_controlvm 扩展 |
+| 16 | UI | ControlAreaWidget 重构（垂直/水平分组、布局动态切换、3 使能+2 同步开关、舵机标签与权限解锁）；指令页模式区 7 开关（同一模型）；Pending Ring/回退 ExInfoBar/AlarmModel/日志接线 |
+| 17 | 视频 | VideoFrameHub + 指令页左上小视频 + hub 单元测试（双读者同帧/丢旧不积压/不阻塞） |
+| 18 | 窗口 | 几何修复 + 新增 test_windowgui GUI 测试套件（普通/最大化/重复操作） |
+| 19 | 文档与验收 | WINDOWS_A35_INTERFACE.md 全面改版、README、HANDOFF 当前状态、DELIVERY_REPORT.md；Debug+Release 全量构建 + 全部测试汇总；证据等级注明"Windows 侧和 Mock A35 通过，实机未对接" |
+
+## R.10 测试计划（对齐二轮提示词 §十三）
+
+- 编码：Servo ID 0–9、Vertical CH10–13、Horizontal CH14–15、非法 ID 拒绝、Stop/Estop/Emergency 载荷不含 Servo、新 funcId 唯一且注册表完整。
+- Safe/姿态稳定：SafeOn 双 Pending 目标 ON、成功双 ON、失败双回退、Safe ON 不能关姿态稳定、SafeOff 不关姿态稳定、Safe 不锁舵机、非法组合 Safe ON+Stab OFF 触发告警与推进器锁定。
+- SwitchButton 事务（7 开关逐个）：PendingToOn/PendingToOff、成功提交、NACK 回退、超时回退、断线回退 Unknown、StateEvent 先于 ACK、ACK 与 StateEvent 冲突、ProgressRing 显隐。
+- 推进器布局：稳定 ON=垂直 1+水平 1；稳定 OFF+双同步 OFF=4+2；仅垂直同步 ON；仅水平同步 ON；总使能 OFF 全灰；分组使能 OFF 只灰对应组；任何推进器模式不影响舵机。
+- 视频：主页/指令页共享单管线；两视图同时获最新帧；页面切换不重启管线；不竞争弹出同一 RingBuffer 帧；小画面保持比例。
+- 窗口（GUI 测试）：普通窗口展开/收起菜单后 geometry 不变；告警栏同；最大化操作后仍最大化；重复操作无尺寸漂移。
+
+## R.11 风险与回滚
+
+| 风险 | 缓解 |
+|---|---|
+| StateEventV2 与 A35 实机后续实现不一致 | 常量集中 WireConstants；version 字段前向兼容；legacy 0x0102 保留可退回；docs 待确认清单持续维护 |
+| 紧急队列排序引入发送回归 | Phase 13 单测覆盖插队次序（Estop>Emergency>StopMove>普通）；Phase 6 estop 插队延迟性能用例回归 |
+| 布局动态切换破坏滑条三态 | 布局判定纯函数化，test_controlvm 先行；UI 只做显隐不改三态数据 |
+| 双视频渲染 GL 上下文开销 | 小视频独立实例仅新帧 update；页面隐藏时跳过绘制 |
+| GBK 转换破坏中文源文件 | 沿用一轮纪律：新/改文件统一转 GBK + iconv 往返校验 |
+| 窗口几何修复导致内容挤压 | 告警面板 maxHeight + 内容区最小尺寸约束；GUI 测试断言 |
+
+回滚：每 Phase 一个 commit 保持可编译，按 commit 粒度回退。
