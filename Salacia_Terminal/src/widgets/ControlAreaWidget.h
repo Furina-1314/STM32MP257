@@ -4,22 +4,33 @@
 
 #include <QVector>
 
+#include "core/SafetyStateModel.h"
+
 class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QSlider;
+class QStackedLayout;
 class QPushButton;
 
 namespace salacia {
 
 class ControlViewModel;
 class SafetyStateModel;
+class SwitchButtonWidget;
 
 // 控制区共享组件（主页与指令页复用）
 //
-// 内容：舵机组（N 路竖直滑条 + 上方三态标签 + 下方输入框）+
-//       推进器组（M 路同构；horizontal on 时整组隐藏改由基准组接管）+
-//       基准组（horizontal on 专用单滑条）+ 可选紧急固定区。
+// 内容：
+//  - 舵机组：10 路竖直滑条（舵机1（CH0）..舵机10（CH9）；三态标签+输入框），
+//    仅断线禁用（与全部推进器模式解耦红线）；
+//  - 垂直推进器组（CH10-13）/ 水平推进器组（CH14-15）：各带 Synchronization
+//    开关；组内布局按权威状态动态切换（独立滑条 / 同步滑条 / 基准滑条）；
+//  - 推进器使能列：总使能/垂直/水平三级开关 + 布局提示；
+//  - 可选紧急固定区（estop/emergency + 模式提示）。
+//
+// 布局与权限判定只读 SafetyStateModel（唯一权威），本组件不做业务判断；
+// 所有滑条保留 目标值/已发送值/A35 确认值 三态显示。
 class ControlAreaWidget : public QWidget
 {
     Q_OBJECT
@@ -36,32 +47,52 @@ protected:
     bool eventFilter(QObject* watched, QEvent* event) override; // 输入框滚轮拦截
 
 private:
-    QGroupBox* buildServoGroup();
-    QGroupBox* buildThrusterGroup();
-    QGroupBox* buildBaseGroup();
-    QWidget* buildEmergencyArea();
-    void commitServoInput(int id);
-    void commitThrusterInput(int id);
-    void updateServoLabel(int id);
-    void updateThrusterLabel(int id);
-
-    ControlViewModel* vm_ = nullptr;
-    SafetyStateModel* safety_ = nullptr;
-
     struct RowUi
     {
         QSlider* slider = nullptr;
         QLabel* target = nullptr;
         QLineEdit* input = nullptr;
     };
-    QVector<RowUi> servoRows_;
-    QVector<RowUi> thrusterRows_;
+    struct GroupUi
+    {
+        QGroupBox* group = nullptr;
+        QStackedLayout* stack = nullptr; // 0=独立 1=同步 2=基准
+        QVector<RowUi> rows;             // 独立滑条（组内编号 1..N）
+        QSlider* syncSlider = nullptr;   // 同步滑条（组同步 ON）
+        QLabel* syncTarget = nullptr;
+        QSlider* baseSlider = nullptr;   // 基准滑条（姿态稳定 ON）
+        QLabel* baseTarget = nullptr;
+        SwitchButtonWidget* syncSwitch = nullptr;
+        QLabel* hint = nullptr;          // 组内布局/锁存提示
+    };
 
+    QGroupBox* buildServoGroup();
+    QGroupBox* buildThrusterGroup(bool vertical);
+    QGroupBox* buildEnableGroup();
+    QWidget* buildEmergencyArea();
+    void onSyncSwitchToggled(bool vertical, bool on);
+    void onEnableSwitchToggled(SwitchId id, bool on);
+    void commitServoInput(int uiNumber);
+    void commitThrusterInput(bool vertical, int uiNumber);
+    void updateServoLabel(int uiNumber);
+    void updateThrusterLabel(bool vertical, int uiNumber);
+    void updateSyncUi(bool vertical);
+    void updateBaseUi(bool vertical);
+    void applyGroupUi(bool vertical);
+
+    ControlViewModel* vm_ = nullptr;
+    SafetyStateModel* safety_ = nullptr;
+
+    QVector<RowUi> servoRows_;
     QGroupBox* servoGroup_ = nullptr;
-    QGroupBox* thrusterGroup_ = nullptr;
-    QGroupBox* baseGroup_ = nullptr;
-    QSlider* baseSlider_ = nullptr;
-    QLabel* baseValue_ = nullptr;
+
+    GroupUi verticalGroup_;
+    GroupUi horizontalGroup_;
+
+    SwitchButtonWidget* enableAllSw_ = nullptr;
+    SwitchButtonWidget* enableVerticalSw_ = nullptr;
+    SwitchButtonWidget* enableHorizontalSw_ = nullptr;
+    QLabel* layoutHintLabel_ = nullptr;
 
     QPushButton* estopBtn_ = nullptr;
     QPushButton* emergencyBtn_ = nullptr;

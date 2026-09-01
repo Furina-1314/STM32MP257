@@ -73,6 +73,12 @@ public:
     void requestStopAll();
     void requestMoveGroup(bool vertical);
     void requestStopGroup(bool vertical);
+    // 模式开关（Safe/姿态稳定/双同步）；事务 Pending 由 SafetyStateModel
+    // 经 requestSent 链管理，此处只做链路门控与发送
+    void requestSafeMode(bool on);
+    void requestAttitudeStab(bool on);
+    void requestVerticalSync(bool on);
+    void requestHorizontalSync(bool on);
     void requestEstop();                  // 空载荷直发（确认门控在 UI 层）
     void requestEmergency();
 

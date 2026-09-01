@@ -8,11 +8,14 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSlider>
+#include <QStackedLayout>
 #include <QVBoxLayout>
 
+#include "communication/WireConstants.h"
 #include "control/ControlViewModel.h"
 #include "core/AppConfig.h"
 #include "core/SafetyStateModel.h"
+#include "widgets/SwitchButtonWidget.h"
 
 namespace salacia {
 
@@ -26,40 +29,57 @@ ControlAreaWidget::ControlAreaWidget(ControlViewModel* viewModel,
 {
     auto* layout = new QHBoxLayout(this);
     servoGroup_ = buildServoGroup();
-    thrusterGroup_ = buildThrusterGroup();
     layout->addWidget(servoGroup_, 4);
-    layout->addWidget(thrusterGroup_, 3);
+    layout->addWidget(buildThrusterGroup(true), 3);
+    layout->addWidget(buildThrusterGroup(false), 2);
+
+    auto* rightColumn = new QVBoxLayout();
+    rightColumn->addWidget(buildEnableGroup());
     if (withEmergencyArea) {
-        layout->addWidget(buildEmergencyArea(), 2);
+        rightColumn->addWidget(buildEmergencyArea(), 1);
+    } else {
+        rightColumn->addStretch(1);
     }
+    layout->addLayout(rightColumn, 2);
 
     connect(vm_, &ControlViewModel::channelUpdated, this,
             [this](int kind, int id) {
                 if (kind == 0) {
                     updateServoLabel(id);
                 } else {
-                    updateThrusterLabel(id);
+                    // 扁平 1..4=垂直 5..6=水平
+                    if (id <= wire::kVerticalCount) {
+                        updateThrusterLabel(true, id);
+                    } else {
+                        updateThrusterLabel(false, id - wire::kVerticalCount);
+                    }
                 }
             }, Qt::QueuedConnection);
     connect(vm_, &ControlViewModel::baseUpdated, this, [this] {
-        baseValue_->setText(QStringLiteral("%1%").arg(vm_->baseTarget()));
+        updateBaseUi(true);
+        updateBaseUi(false);
     }, Qt::QueuedConnection);
+    // 请求被拒（链路不可用等）：乐观显示回到权威状态
+    connect(vm_, &ControlViewModel::permissionBlocked, this,
+            &ControlAreaWidget::refreshPermissions, Qt::QueuedConnection);
 
     refreshPermissions();
 }
+
+// ---------------------------------------------------------------- 舵机组
 
 QGroupBox* ControlAreaWidget::buildServoGroup()
 {
     const AppConfig& cfg = AppConfig::instance();
     auto* group = new QGroupBox(QString::fromLocal8Bit("舵机（%1 路，°）")
-                                    .arg(cfg.servoCount()), this);
+                                    .arg(wire::kServoCount), this);
     auto* layout = new QHBoxLayout(group);
     layout->setSpacing(8);
-    servoRows_.resize(cfg.servoCount());
+    servoRows_.resize(wire::kServoCount);
     const int mid = (cfg.servoMinDeg() + cfg.servoMaxDeg()) / 2;
 
     for (int i = 0; i < servoRows_.size(); ++i) {
-        const int id = i + 1;
+        const int uiNumber = i + 1;
         auto* column = new QVBoxLayout();
         column->setSpacing(2);
         auto* target = new QLabel(group);
@@ -76,7 +96,11 @@ QGroupBox* ControlAreaWidget::buildServoGroup()
                 new QIntValidator(cfg.servoMinDeg(), cfg.servoMaxDeg(), input));
         input->installEventFilter(this);
 
-        column->addWidget(new QLabel(QString::number(id), group), 0, Qt::AlignCenter);
+        // 标签规范：舵机1（CH0）..舵机10（CH9）——UI 编号与 wireId 分离
+        column->addWidget(new QLabel(QString::fromLocal8Bit("舵机%1（CH%2）")
+                                             .arg(uiNumber)
+                                             .arg(wire::servoWireId(uiNumber)),
+                                     group), 0, Qt::AlignCenter);
         column->addWidget(target);
         column->addWidget(slider, 1);
         column->addWidget(input);
@@ -86,99 +110,220 @@ QGroupBox* ControlAreaWidget::buildServoGroup()
         servoRows_[i].target = target;
         servoRows_[i].input = input;
 
-        connect(slider, &QSlider::valueChanged, this, [this, id](int v) {
-            vm_->setServoTarget(id, v, false);
+        connect(slider, &QSlider::valueChanged, this, [this, uiNumber](int v) {
+            vm_->setServoTarget(uiNumber, v, false);
         });
-        connect(slider, &QSlider::sliderReleased, this, [this, id] {
-            vm_->setServoTarget(id, servoRows_[id - 1].slider->value(), true);
+        connect(slider, &QSlider::sliderReleased, this, [this, uiNumber] {
+            vm_->setServoTarget(uiNumber,
+                                servoRows_[uiNumber - 1].slider->value(), true);
         });
-        connect(input, &QLineEdit::returnPressed, this, [this, id] {
-            commitServoInput(id);
+        connect(input, &QLineEdit::returnPressed, this, [this, uiNumber] {
+            commitServoInput(uiNumber);
         });
-        connect(input, &QLineEdit::editingFinished, this, [this, id] {
-            commitServoInput(id);
+        connect(input, &QLineEdit::editingFinished, this, [this, uiNumber] {
+            commitServoInput(uiNumber);
         });
-        updateServoLabel(id);
+        updateServoLabel(uiNumber);
     }
     return group;
 }
 
-QGroupBox* ControlAreaWidget::buildThrusterGroup()
+// ---------------------------------------------------------------- 推进器组
+
+QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
 {
     const AppConfig& cfg = AppConfig::instance();
-    auto* group = new QGroupBox(QString::fromLocal8Bit("推进器（%1 路，%）")
-                                    .arg(cfg.thrusterCount()), this);
-    auto* layout = new QHBoxLayout(group);
-    layout->setSpacing(8);
-    thrusterRows_.resize(cfg.thrusterCount());
+    const int count = vertical ? wire::kVerticalCount : wire::kHorizontalCount;
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    g.group = new QGroupBox(vertical
+            ? QString::fromLocal8Bit("垂直推进器（CH10-13，%）")
+            : QString::fromLocal8Bit("水平推进器（CH14-15，%）"), this);
+    auto* vlay = new QVBoxLayout(g.group);
 
-    for (int i = 0; i < thrusterRows_.size(); ++i) {
-        const int id = i + 1;
+    // 组同步开关（权威显示可切换；姿态稳定 ON 时布局仍保持一组一条）
+    g.syncSwitch = new SwitchButtonWidget(
+            vertical ? QString::fromLocal8Bit("垂直同步（Synchronization）")
+                     : QString::fromLocal8Bit("水平同步（Synchronization）"),
+            g.group);
+    vlay->addWidget(g.syncSwitch);
+    connect(g.syncSwitch, &SwitchButtonWidget::toggleRequested, this,
+            [this, vertical](bool on) {
+                SwitchButtonWidget* sw = (vertical ? verticalGroup_ : horizontalGroup_)
+                                                   .syncSwitch;
+                sw->showPending(on); // 乐观显示，回退经刷新链修正
+                onSyncSwitchToggled(vertical, on);
+            });
+
+    // 布局堆叠：0=独立 1=同步 2=基准
+    auto* stackHost = new QWidget(g.group);
+    g.stack = new QStackedLayout(stackHost);
+
+    // 独立滑条页
+    auto* indPage = new QWidget(stackHost);
+    auto* indLay = new QHBoxLayout(indPage);
+    indLay->setSpacing(8);
+    g.rows.resize(count);
+    for (int i = 0; i < count; ++i) {
+        const int uiNumber = i + 1;
         auto* column = new QVBoxLayout();
         column->setSpacing(2);
-        auto* target = new QLabel(group);
+        auto* target = new QLabel(indPage);
         target->setAlignment(Qt::AlignCenter);
-        auto* slider = new QSlider(Qt::Vertical, group);
+        auto* slider = new QSlider(Qt::Vertical, indPage);
         slider->setRange(cfg.thrusterMinPct(), cfg.thrusterMaxPct());
         slider->setSingleStep(cfg.thrusterStepPct());
         slider->setValue(0);
         slider->setTickPosition(QSlider::TicksBelow);
-        auto* input = new QLineEdit(group);
+        auto* input = new QLineEdit(indPage);
         input->setAlignment(Qt::AlignCenter);
         input->setFixedWidth(56);
         input->setValidator(
                 new QIntValidator(cfg.thrusterMinPct(), cfg.thrusterMaxPct(), input));
         input->installEventFilter(this);
 
-        column->addWidget(new QLabel(QString::number(id), group), 0, Qt::AlignCenter);
+        // 标签规范：垂直1（CH10）..水平2（CH15）
+        const quint8 wireId = vertical ? wire::verticalWireId(uiNumber)
+                                       : wire::horizontalWireId(uiNumber);
+        column->addWidget(new QLabel(
+                QString::fromLocal8Bit(vertical ? "垂直%1（CH%2）" : "水平%1（CH%2）")
+                        .arg(uiNumber).arg(wireId), indPage), 0, Qt::AlignCenter);
         column->addWidget(target);
         column->addWidget(slider, 1);
         column->addWidget(input);
-        layout->addLayout(column, 1);
+        indLay->addLayout(column, 1);
 
-        thrusterRows_[i].slider = slider;
-        thrusterRows_[i].target = target;
-        thrusterRows_[i].input = input;
+        g.rows[i].slider = slider;
+        g.rows[i].target = target;
+        g.rows[i].input = input;
 
-        connect(slider, &QSlider::valueChanged, this, [this, id](int v) {
-            vm_->setThrusterTarget(id, v, false);
+        connect(slider, &QSlider::valueChanged, this,
+                [this, vertical, uiNumber](int v) {
+            if (vertical) {
+                vm_->setVerticalThrusterTarget(uiNumber, v, false);
+            } else {
+                vm_->setHorizontalThrusterTarget(uiNumber, v, false);
+            }
         });
-        connect(slider, &QSlider::sliderReleased, this, [this, id] {
-            vm_->setThrusterTarget(id, thrusterRows_[id - 1].slider->value(), true);
+        connect(slider, &QSlider::sliderReleased, this,
+                [this, vertical, uiNumber] {
+            const QSlider* s = (vertical ? verticalGroup_ : horizontalGroup_)
+                                       .rows.at(uiNumber - 1).slider;
+            if (vertical) {
+                vm_->setVerticalThrusterTarget(uiNumber, s->value(), true);
+            } else {
+                vm_->setHorizontalThrusterTarget(uiNumber, s->value(), true);
+            }
         });
-        connect(input, &QLineEdit::returnPressed, this, [this, id] {
-            commitThrusterInput(id);
-        });
-        connect(input, &QLineEdit::editingFinished, this, [this, id] {
-            commitThrusterInput(id);
-        });
-        updateThrusterLabel(id);
+        connect(input, &QLineEdit::returnPressed, this,
+                [this, vertical, uiNumber] { commitThrusterInput(vertical, uiNumber); });
+        connect(input, &QLineEdit::editingFinished, this,
+                [this, vertical, uiNumber] { commitThrusterInput(vertical, uiNumber); });
+        updateThrusterLabel(vertical, uiNumber);
     }
-    return group;
+    g.stack->addWidget(indPage);
+
+    // 同步滑条页（单条控制全组同值）
+    auto* syncPage = new QWidget(stackHost);
+    auto* syncLay = new QHBoxLayout(syncPage);
+    syncLay->setSpacing(8);
+    g.syncTarget = new QLabel(syncPage);
+    g.syncTarget->setAlignment(Qt::AlignCenter);
+    g.syncSlider = new QSlider(Qt::Vertical, syncPage);
+    g.syncSlider->setRange(cfg.thrusterMinPct(), cfg.thrusterMaxPct());
+    g.syncSlider->setSingleStep(cfg.thrusterStepPct());
+    g.syncSlider->setValue(0);
+    g.syncSlider->setTickPosition(QSlider::TicksBelow);
+    syncLay->addWidget(new QLabel(QString::fromLocal8Bit("同步"), syncPage),
+                       0, Qt::AlignCenter);
+    syncLay->addWidget(g.syncTarget, 0, Qt::AlignCenter);
+    syncLay->addWidget(g.syncSlider, 1);
+    syncLay->addStretch(2);
+    g.stack->addWidget(syncPage);
+    connect(g.syncSlider, &QSlider::valueChanged, this, [this, vertical](int v) {
+        if (vertical) {
+            vm_->setVerticalSyncTarget(v, false);
+        } else {
+            vm_->setHorizontalSyncTarget(v, false);
+        }
+    });
+    connect(g.syncSlider, &QSlider::sliderReleased, this, [this, vertical] {
+        const QSlider* s = (vertical ? verticalGroup_ : horizontalGroup_).syncSlider;
+        if (vertical) {
+            vm_->setVerticalSyncTarget(s->value(), true);
+        } else {
+            vm_->setHorizontalSyncTarget(s->value(), true);
+        }
+    });
+
+    // 基准滑条页（姿态稳定 ON，BaseValueVH 双组独立基准）
+    auto* basePage = new QWidget(stackHost);
+    auto* baseLay = new QHBoxLayout(basePage);
+    baseLay->setSpacing(8);
+    g.baseSlider = new QSlider(Qt::Horizontal, basePage);
+    g.baseSlider->setRange(cfg.thrusterMinPct(), cfg.thrusterMaxPct());
+    g.baseSlider->setValue(0);
+    g.baseTarget = new QLabel(basePage);
+    g.baseTarget->setFixedWidth(cfg.controlValueLabelWidth());
+    baseLay->addWidget(new QLabel(QString::fromLocal8Bit("基准"), basePage));
+    baseLay->addWidget(g.baseSlider, 1);
+    baseLay->addWidget(g.baseTarget);
+    g.stack->addWidget(basePage);
+    connect(g.baseSlider, &QSlider::valueChanged, this, [this, vertical](int v) {
+        if (vertical) {
+            vm_->setVerticalBaseTarget(v, false);
+        } else {
+            vm_->setHorizontalBaseTarget(v, false);
+        }
+    });
+    connect(g.baseSlider, &QSlider::sliderReleased, this, [this, vertical] {
+        const QSlider* s = (vertical ? verticalGroup_ : horizontalGroup_).baseSlider;
+        if (vertical) {
+            vm_->setVerticalBaseTarget(s->value(), true);
+        } else {
+            vm_->setHorizontalBaseTarget(s->value(), true);
+        }
+    });
+
+    vlay->addWidget(stackHost, 1);
+    g.hint = new QLabel(g.group);
+    g.hint->setWordWrap(true);
+    g.hint->setStyleSheet(QStringLiteral("color:#888888; font-size:11px;"));
+    vlay->addWidget(g.hint);
+    return g.group;
 }
 
-QGroupBox* ControlAreaWidget::buildBaseGroup()
-{
-    const AppConfig& cfg = AppConfig::instance();
-    auto* group = new QGroupBox(QString::fromLocal8Bit("基准转速（%）"), this);
-    auto* layout = new QVBoxLayout(group);
-    auto* row = new QHBoxLayout();
-    baseSlider_ = new QSlider(Qt::Horizontal, group);
-    baseSlider_->setRange(cfg.thrusterMinPct(), cfg.thrusterMaxPct());
-    baseSlider_->setValue(0);
-    baseValue_ = new QLabel(QStringLiteral("0%"), group);
-    baseValue_->setFixedWidth(cfg.controlValueLabelWidth());
-    row->addWidget(baseSlider_, 1);
-    row->addWidget(baseValue_);
-    layout->addLayout(row);
+// ---------------------------------------------------------------- 使能列
 
-    connect(baseSlider_, &QSlider::valueChanged, this, [this](int v) {
-        vm_->setBaseTarget(v, false);
-        baseValue_->setText(QStringLiteral("%1%").arg(v));
-    });
-    connect(baseSlider_, &QSlider::sliderReleased, this, [this] {
-        vm_->setBaseTarget(baseSlider_->value(), true);
-    });
+QGroupBox* ControlAreaWidget::buildEnableGroup()
+{
+    auto* group = new QGroupBox(QString::fromLocal8Bit("推进器使能"), this);
+    auto* lay = new QVBoxLayout(group);
+    enableAllSw_ = new SwitchButtonWidget(
+            QString::fromLocal8Bit("推进器总使能"), group);
+    enableVerticalSw_ = new SwitchButtonWidget(
+            QString::fromLocal8Bit("垂直推进使能"), group);
+    enableHorizontalSw_ = new SwitchButtonWidget(
+            QString::fromLocal8Bit("水平推进使能"), group);
+    lay->addWidget(enableAllSw_);
+    lay->addWidget(enableVerticalSw_);
+    lay->addWidget(enableHorizontalSw_);
+
+    const auto bindEnable = [this](SwitchButtonWidget* w, SwitchId id) {
+        connect(w, &SwitchButtonWidget::toggleRequested, this,
+                [this, id, w](bool on) {
+                    w->showPending(on); // 乐观显示，回退经刷新链修正
+                    onEnableSwitchToggled(id, on);
+                });
+    };
+    bindEnable(enableAllSw_, SwitchId::GlobalEnable);
+    bindEnable(enableVerticalSw_, SwitchId::VerticalEnable);
+    bindEnable(enableHorizontalSw_, SwitchId::HorizontalEnable);
+
+    layoutHintLabel_ = new QLabel(group);
+    layoutHintLabel_->setWordWrap(true);
+    layoutHintLabel_->setStyleSheet(QStringLiteral("color:#888888; font-size:11px;"));
+    lay->addWidget(layoutHintLabel_);
+    lay->addStretch(1);
     return group;
 }
 
@@ -192,9 +337,6 @@ QWidget* ControlAreaWidget::buildEmergencyArea()
     modeHintLabel_->setAlignment(Qt::AlignCenter);
     modeHintLabel_->setWordWrap(true);
     layout->addWidget(modeHintLabel_);
-
-    baseGroup_ = buildBaseGroup();
-    layout->addWidget(baseGroup_);
 
     estopBtn_ = new QPushButton(QString::fromLocal8Bit("紧急停机"), area);
     estopBtn_->setMinimumHeight(cfg.estopButtonMinHeight());
@@ -220,6 +362,45 @@ QWidget* ControlAreaWidget::buildEmergencyArea()
     return area;
 }
 
+// ---------------------------------------------------------------- 开关回调
+
+void ControlAreaWidget::onSyncSwitchToggled(bool vertical, bool on)
+{
+    const SwitchId id = vertical ? SwitchId::VerticalSync : SwitchId::HorizontalSync;
+    if (!safety_->switchToggleAllowed(id, on)) {
+        refreshPermissions(); // 回到权威显示（Pending 禁重复点击等）
+        return;
+    }
+    if (vertical) {
+        vm_->requestVerticalSync(on);
+    } else {
+        vm_->requestHorizontalSync(on);
+    }
+}
+
+void ControlAreaWidget::onEnableSwitchToggled(SwitchId id, bool on)
+{
+    if (!safety_->switchToggleAllowed(id, on)) {
+        refreshPermissions();
+        return;
+    }
+    switch (id) {
+    case SwitchId::GlobalEnable:
+        on ? vm_->requestMoveAll() : vm_->requestStopAll();
+        break;
+    case SwitchId::VerticalEnable:
+        on ? vm_->requestMoveGroup(true) : vm_->requestStopGroup(true);
+        break;
+    case SwitchId::HorizontalEnable:
+        on ? vm_->requestMoveGroup(false) : vm_->requestStopGroup(false);
+        break;
+    default:
+        break; // 其余开关不在本组件
+    }
+}
+
+// ---------------------------------------------------------------- 输入提交
+
 bool ControlAreaWidget::eventFilter(QObject* watched, QEvent* event)
 {
     if (event->type() == QEvent::Wheel) {
@@ -228,82 +409,146 @@ bool ControlAreaWidget::eventFilter(QObject* watched, QEvent* event)
                 return true;
             }
         }
-        for (const RowUi& row : thrusterRows_) {
-            if (row.input == watched) {
-                return true;
+        for (const GroupUi* g : {&verticalGroup_, &horizontalGroup_}) {
+            for (const RowUi& row : g->rows) {
+                if (row.input == watched) {
+                    return true;
+                }
             }
         }
     }
     return QWidget::eventFilter(watched, event);
 }
 
-void ControlAreaWidget::commitServoInput(int id)
+void ControlAreaWidget::commitServoInput(int uiNumber)
 {
-    const ChannelVm ch = vm_->servo(id);
-    const QString text = servoRows_[id - 1].input->text().trimmed();
+    const ChannelVm ch = vm_->servo(uiNumber);
+    const QString text = servoRows_[uiNumber - 1].input->text().trimmed();
     bool ok = false;
     const int value = text.toInt(&ok);
     if (!ok || text.isEmpty()) {
-        servoRows_[id - 1].input->setText(QString::number(ch.target));
+        servoRows_[uiNumber - 1].input->setText(QString::number(ch.target));
         return;
     }
-    vm_->setServoTarget(id, value, true);
-    servoRows_[id - 1].input->setText(QString::number(vm_->servo(id).target));
+    vm_->setServoTarget(uiNumber, value, true);
+    servoRows_[uiNumber - 1].input->setText(QString::number(vm_->servo(uiNumber).target));
 }
 
-void ControlAreaWidget::commitThrusterInput(int id)
+void ControlAreaWidget::commitThrusterInput(bool vertical, int uiNumber)
 {
-    const ChannelVm ch = vm_->thruster(id);
-    const QString text = thrusterRows_[id - 1].input->text().trimmed();
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    const ChannelVm ch = vertical ? vm_->verticalThruster(uiNumber)
+                                  : vm_->horizontalThruster(uiNumber);
+    const QString text = g.rows[uiNumber - 1].input->text().trimmed();
     bool ok = false;
     const int value = text.toInt(&ok);
     if (!ok || text.isEmpty()) {
-        thrusterRows_[id - 1].input->setText(QString::number(ch.target));
+        g.rows[uiNumber - 1].input->setText(QString::number(ch.target));
         return;
     }
-    vm_->setThrusterTarget(id, value, true);
-    thrusterRows_[id - 1].input->setText(QString::number(vm_->thruster(id).target));
+    if (vertical) {
+        vm_->setVerticalThrusterTarget(uiNumber, value, true);
+    } else {
+        vm_->setHorizontalThrusterTarget(uiNumber, value, true);
+    }
+    g.rows[uiNumber - 1].input->setText(
+            QString::number(vertical ? vm_->verticalThruster(uiNumber).target
+                                     : vm_->horizontalThruster(uiNumber).target));
 }
 
-void ControlAreaWidget::updateServoLabel(int id)
+// ---------------------------------------------------------------- 三态刷新
+
+void ControlAreaWidget::updateServoLabel(int uiNumber)
 {
-    const ChannelVm ch = vm_->servo(id);
+    const ChannelVm ch = vm_->servo(uiNumber);
     const QString confirmed = ch.confirmedValid
             ? QString::number(ch.confirmed) : QString::fromLocal8Bit("?");
-    servoRows_[id - 1].target->setText(
+    servoRows_[uiNumber - 1].target->setText(
             QString::fromLocal8Bit("%1°|%2").arg(ch.target).arg(confirmed));
-    servoRows_[id - 1].slider->setValue(ch.target);
-    if (!servoRows_[id - 1].input->hasFocus()) {
-        servoRows_[id - 1].input->setText(QString::number(ch.target));
+    servoRows_[uiNumber - 1].slider->blockSignals(true);
+    servoRows_[uiNumber - 1].slider->setValue(ch.target);
+    servoRows_[uiNumber - 1].slider->blockSignals(false);
+    if (!servoRows_[uiNumber - 1].input->hasFocus()) {
+        servoRows_[uiNumber - 1].input->setText(QString::number(ch.target));
     }
 }
 
-void ControlAreaWidget::updateThrusterLabel(int id)
+void ControlAreaWidget::updateThrusterLabel(bool vertical, int uiNumber)
 {
-    const ChannelVm ch = vm_->thruster(id);
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    const ChannelVm ch = vertical ? vm_->verticalThruster(uiNumber)
+                                  : vm_->horizontalThruster(uiNumber);
     const QString confirmed = ch.confirmedValid
             ? QString::number(ch.confirmed) : QString::fromLocal8Bit("?");
-    thrusterRows_[id - 1].target->setText(
-            QString::fromLocal8Bit("%1%%2").arg(ch.target).arg(confirmed));
-    thrusterRows_[id - 1].slider->setValue(ch.target);
-    if (!thrusterRows_[id - 1].input->hasFocus()) {
-        thrusterRows_[id - 1].input->setText(QString::number(ch.target));
+    g.rows[uiNumber - 1].target->setText(
+            QString::fromLocal8Bit("%1|%2").arg(ch.target).arg(confirmed));
+    g.rows[uiNumber - 1].slider->blockSignals(true);
+    g.rows[uiNumber - 1].slider->setValue(ch.target);
+    g.rows[uiNumber - 1].slider->blockSignals(false);
+    if (!g.rows[uiNumber - 1].input->hasFocus()) {
+        g.rows[uiNumber - 1].input->setText(QString::number(ch.target));
     }
 }
+
+void ControlAreaWidget::updateSyncUi(bool vertical)
+{
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    const ChannelVm first = vertical ? vm_->verticalThruster(1)
+                                     : vm_->horizontalThruster(1);
+    const QString confirmed = first.confirmedValid
+            ? QString::number(first.confirmed) : QString::fromLocal8Bit("?");
+    g.syncTarget->setText(
+            QString::fromLocal8Bit("%1|%2").arg(first.target).arg(confirmed));
+    g.syncSlider->blockSignals(true);
+    g.syncSlider->setValue(first.target);
+    g.syncSlider->blockSignals(false);
+}
+
+void ControlAreaWidget::updateBaseUi(bool vertical)
+{
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    const int target = vertical ? vm_->verticalBaseTarget()
+                                : vm_->horizontalBaseTarget();
+    const ChannelVm first = vertical ? vm_->verticalThruster(1)
+                                     : vm_->horizontalThruster(1);
+    const QString confirmed = first.confirmedValid
+            ? QString::number(first.confirmed) : QString::fromLocal8Bit("?");
+    g.baseTarget->setText(
+            QString::fromLocal8Bit("%1%%2").arg(target).arg(confirmed));
+    g.baseSlider->blockSignals(true);
+    g.baseSlider->setValue(target);
+    g.baseSlider->blockSignals(false);
+}
+
+// ---------------------------------------------------------------- 权限/布局
 
 void ControlAreaWidget::refreshPermissions()
 {
-    const bool servo = safety_->canServoIndividual();
-    const bool thruster = safety_->canThrusterIndividual();
-    const bool base = safety_->canBaseSlider();
+    // 舵机：仅断线禁用（与 Safe/姿态稳定/同步/Stop-Move/Estop/Emergency 解耦）
+    servoGroup_->setEnabled(safety_->canServoIndividual());
 
-    servoGroup_->setEnabled(servo);
-    thrusterGroup_->setEnabled(thruster);
-    thrusterGroup_->setVisible(!safety_->baseSliderVisible());
-    if (baseGroup_ != nullptr) {
-        baseGroup_->setVisible(safety_->baseSliderVisible());
-        baseGroup_->setEnabled(base);
+    applyGroupUi(true);
+    applyGroupUi(false);
+
+    // 使能开关（权威四态绑定）
+    enableAllSw_->bind(safety_, SwitchId::GlobalEnable);
+    enableVerticalSw_->bind(safety_, SwitchId::VerticalEnable);
+    enableHorizontalSw_->bind(safety_, SwitchId::HorizontalEnable);
+
+    // 布局总提示
+    const ModeState stab = safety_->switchState(SwitchId::AttitudeStab);
+    if (stab == ModeState::On) {
+        layoutHintLabel_->setText(QString::fromLocal8Bit(
+                "姿态稳定模式：使用统一基准，Synchronization 状态将在退出"
+                "姿态稳定后决定布局"));
+    } else if (stab == ModeState::Unknown) {
+        layoutHintLabel_->setText(QString::fromLocal8Bit(
+                "姿态稳定状态未知：推进器保守禁用"));
+    } else {
+        layoutHintLabel_->setText(QString::fromLocal8Bit(
+                "布局由各组 Synchronization 决定：同步开=单条，同步关=逐路"));
     }
+
     if (modeHintLabel_ != nullptr) {
         modeHintLabel_->setText(safety_->controlsLocked()
                 ? QString::fromLocal8Bit("等待权威状态\n（断线或未收到状态事件）")
@@ -345,6 +590,52 @@ void ControlAreaWidget::refreshPermissions()
             break;
         }
     }
+}
+
+void ControlAreaWidget::applyGroupUi(bool vertical)
+{
+    GroupUi& g = vertical ? verticalGroup_ : horizontalGroup_;
+    const ThrusterGroupLayout layout = vertical ? safety_->verticalLayout()
+                                                : safety_->horizontalLayout();
+    const bool operable = safety_->canThrusterGroup(vertical);
+
+    g.stack->setCurrentIndex(layout == ThrusterGroupLayout::Individual ? 0
+                             : layout == ThrusterGroupLayout::Sync ? 1 : 2);
+
+    // 分组停止锁存/使能请求中：滑条与输入框全部置灰（§七.5）
+    const bool indEnabled =
+            operable && (layout == ThrusterGroupLayout::Individual);
+    for (RowUi& row : g.rows) {
+        row.slider->setEnabled(indEnabled);
+        row.input->setEnabled(indEnabled);
+    }
+    g.syncSlider->setEnabled(operable && (layout == ThrusterGroupLayout::Sync));
+    g.baseSlider->setEnabled(operable && (layout == ThrusterGroupLayout::Base));
+
+    // 同步开关权威显示（姿态稳定 ON 时仍显示权威状态、可切换，布局不变）
+    g.syncSwitch->bind(safety_, vertical ? SwitchId::VerticalSync
+                                         : SwitchId::HorizontalSync);
+
+    // 组提示
+    if (safety_->switchState(SwitchId::AttitudeStab) == ModeState::On) {
+        g.hint->setText(QString::fromLocal8Bit("统一基准控制（BaseValueVH）"));
+    } else if (!operable) {
+        g.hint->setText(vertical
+                ? QString::fromLocal8Bit("垂直组不可操作（停止锁存/使能请求中/权威未知）")
+                : QString::fromLocal8Bit("水平组不可操作（停止锁存/使能请求中/权威未知）"));
+    } else if (layout == ThrusterGroupLayout::Sync) {
+        g.hint->setText(QString::fromLocal8Bit("同步模式：单滑条控制全组"));
+    } else {
+        g.hint->setText(QString());
+    }
+
+    // 三态刷新
+    const int count = vertical ? wire::kVerticalCount : wire::kHorizontalCount;
+    for (int n = 1; n <= count; ++n) {
+        updateThrusterLabel(vertical, n);
+    }
+    updateSyncUi(vertical);
+    updateBaseUi(vertical);
 }
 
 } // namespace salacia

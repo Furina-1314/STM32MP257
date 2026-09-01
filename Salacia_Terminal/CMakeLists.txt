@@ -191,6 +191,8 @@ set(PROJECT_SOURCES
     src/widgets/AboutPageWidget.cpp
     src/widgets/ControlAreaWidget.h
     src/widgets/ControlAreaWidget.cpp
+    src/widgets/SwitchButtonWidget.h
+    src/widgets/SwitchButtonWidget.cpp
     src/widgets/AlarmBarWidget.h
     src/widgets/AlarmBarWidget.cpp
     src/recognition/IModelInfer.h

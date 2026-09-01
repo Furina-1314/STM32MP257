@@ -1,8 +1,6 @@
 #include "CommandPageWidget.h"
 
-#include <QCheckBox>
 #include <QComboBox>
-#include <QProgressBar>
 #include <QDateTime>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -18,6 +16,7 @@
 #include "control/ControlViewModel.h"
 #include "core/SafetyStateModel.h"
 #include "widgets/ControlAreaWidget.h"
+#include "widgets/SwitchButtonWidget.h"
 
 namespace salacia {
 
@@ -119,57 +118,36 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         });
     }
 
-    // ---- 模式开关组（SwitchButton + ProgressRing，各占一行）----
+    // ---- 模式开关组（7 个事务开关，与主页共用同一 SafetyStateModel）----
     {
         auto* group = new QGroupBox(QString::fromLocal8Bit("模式"), this);
         auto* lay = new QVBoxLayout(group);
 
-        // safe 行
-        auto* safeRow = new QHBoxLayout();
-        auto* safeLabel = new QLabel(QString::fromLocal8Bit("safe 安全模式"), group);
-        safeLabel->setFixedWidth(180);
-        safeSwitch_ = new QCheckBox(group);
-        safeSwitch_->setProperty("isSwitchButton", true); // FluentUI SwitchButton
-        safeRing_ = new QProgressBar(group);
-        safeRing_->setRange(0, 0); // 不确定进度（请求中旋转环）
-        safeRing_->setTextVisible(false);
-        safeRing_->setFixedSize(22, 22);
-        safeRing_->setVisible(false);
-        safeStatusLabel_ = new QLabel(group);
-        safeStatusLabel_->setStyleSheet(
-                QStringLiteral("color:#888888; font-size:11px;"));
-        safeRow->addWidget(safeLabel);
-        safeRow->addWidget(safeSwitch_);
-        safeRow->addWidget(safeRing_);
-        safeRow->addWidget(safeStatusLabel_, 1);
-        lay->addLayout(safeRow);
-
-        // horizontal 行
-        auto* horizontalRow = new QHBoxLayout();
-        auto* horizontalLabel =
-                new QLabel(QString::fromLocal8Bit("姿态稳定（Horizontal）"), group);
-        horizontalLabel->setFixedWidth(180);
-        horizontalSwitch_ = new QCheckBox(group);
-        horizontalSwitch_->setProperty("isSwitchButton", true);
-        horizontalRing_ = new QProgressBar(group);
-        horizontalRing_->setRange(0, 0);
-        horizontalRing_->setTextVisible(false);
-        horizontalRing_->setFixedSize(22, 22);
-        horizontalRing_->setVisible(false);
-        horizontalStatusLabel_ = new QLabel(group);
-        horizontalStatusLabel_->setStyleSheet(
-                QStringLiteral("color:#888888; font-size:11px;"));
-        horizontalRow->addWidget(horizontalLabel);
-        horizontalRow->addWidget(horizontalSwitch_);
-        horizontalRow->addWidget(horizontalRing_);
-        horizontalRow->addWidget(horizontalStatusLabel_, 1);
-        lay->addLayout(horizontalRow);
+        const struct
+        {
+            SwitchId id;
+            const char* title; // GBK 字面量
+        } rows[] = {
+            {SwitchId::Safe, "Safe 安全保护"},
+            {SwitchId::AttitudeStab, "姿态稳定（Horizontal）"},
+            {SwitchId::GlobalEnable, "推进器总使能"},
+            {SwitchId::VerticalEnable, "垂直推进使能"},
+            {SwitchId::HorizontalEnable, "水平推进使能"},
+            {SwitchId::VerticalSync, "垂直同步（Synchronization）"},
+            {SwitchId::HorizontalSync, "水平同步（Synchronization）"},
+        };
+        for (const auto& row : rows) {
+            auto* sw = new SwitchButtonWidget(QString::fromLocal8Bit(row.title), group);
+            lay->addWidget(sw);
+            modeSwitches_.append({row.id, sw});
+            connect(sw, &SwitchButtonWidget::toggleRequested, this,
+                    [this, row, sw](bool on) {
+                        sw->showPending(on); // 乐观显示，回退经刷新链修正
+                        onModeSwitchToggled(row.id, on);
+                    });
+        }
 
         formColumn->addWidget(group);
-        connect(safeSwitch_, &QCheckBox::clicked, this,
-                &CommandPageWidget::safeToggled);
-        connect(horizontalSwitch_, &QCheckBox::clicked, this,
-                &CommandPageWidget::horizontalToggled);
     }
 
     // ---- 查询组 ----
@@ -263,6 +241,10 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     controlArea_ = new ControlAreaWidget(vm_, safety_, false, this);
     body->addWidget(controlArea_, 4);
 
+    // 请求被拒（链路不可用等）：乐观显示回到权威状态
+    connect(vm_, &ControlViewModel::permissionBlocked, this,
+            &CommandPageWidget::refreshModeButtons, Qt::QueuedConnection);
+
     // ---- 结果表 ----
     table_ = new QTableWidget(0, 5, this);
     table_->setHorizontalHeaderLabels(QStringList()
@@ -282,58 +264,45 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
 
 void CommandPageWidget::refreshModeButtons()
 {
-    // SwitchButton 四态绑定：
-    //  On      -> checked + ring 隐藏
-    //  Off     -> unchecked + ring 隐藏
-    //  Pending -> checked + ring 可见（请求中旋转）
-    //  Unknown -> unchecked + 置灰不可点
-    const auto bindSwitch = [](QCheckBox* sw, QProgressBar* ring, QLabel* status,
-                               ModeState state) {
-        const bool pending = (state == ModeState::Pending);
-        const bool unknown = (state == ModeState::Unknown);
-        sw->setChecked(pending || (state == ModeState::On));
-        ring->setVisible(pending);
-        sw->setEnabled(!unknown);
-        if (pending) {
-            status->setText(QString::fromLocal8Bit("请求中..."));
-        } else if (unknown) {
-            status->setText(QString::fromLocal8Bit("状态未知"));
-        } else {
-            status->setText(state == ModeState::On
-                                    ? QString::fromLocal8Bit("已开启")
-                                    : QString::fromLocal8Bit("已关闭"));
-        }
-    };
-    bindSwitch(safeSwitch_, safeRing_, safeStatusLabel_, safety_->safeState());
-    bindSwitch(horizontalSwitch_, horizontalRing_, horizontalStatusLabel_,
-               safety_->horizontalState());
+    // 7 个事务开关按 SafetyStateModel 权威四态绑定（含 Safe 联动锁定）
+    for (const ModeSwitch& ms : modeSwitches_) {
+        ms.widget->bind(safety_, ms.id);
+    }
     controlArea_->refreshPermissions();
 }
 
-void CommandPageWidget::safeToggled()
+void CommandPageWidget::onModeSwitchToggled(SwitchId id, bool on)
 {
-    if (!gateSend(QStringLiteral("safe"))) {
-        refreshModeButtons();
+    // 权限判定（Pending 禁重复点击 / Safe ON 禁关姿态稳定）在模型侧
+    if (!safety_->switchToggleAllowed(id, on)) {
+        refreshModeButtons(); // 回到权威显示
         return;
     }
-    const bool turnOn = (safety_->safeState() != ModeState::On);
-    emit commandRequested(turnOn ? static_cast<quint16>(wire::Func::SafeOn)
-                                 : static_cast<quint16>(wire::Func::SafeOff),
-                          QByteArray());
-    refreshModeButtons();
-}
-
-void CommandPageWidget::horizontalToggled()
-{
-    if (!gateSend(QStringLiteral("horizontal"))) {
-        refreshModeButtons();
-        return;
+    switch (id) {
+    case SwitchId::Safe:
+        vm_->requestSafeMode(on);
+        break;
+    case SwitchId::AttitudeStab:
+        vm_->requestAttitudeStab(on);
+        break;
+    case SwitchId::GlobalEnable:
+        on ? vm_->requestMoveAll() : vm_->requestStopAll();
+        break;
+    case SwitchId::VerticalEnable:
+        on ? vm_->requestMoveGroup(true) : vm_->requestStopGroup(true);
+        break;
+    case SwitchId::HorizontalEnable:
+        on ? vm_->requestMoveGroup(false) : vm_->requestStopGroup(false);
+        break;
+    case SwitchId::VerticalSync:
+        vm_->requestVerticalSync(on);
+        break;
+    case SwitchId::HorizontalSync:
+        vm_->requestHorizontalSync(on);
+        break;
+    default:
+        break;
     }
-    const bool turnOn = (safety_->horizontalState() != ModeState::On);
-    emit commandRequested(turnOn ? static_cast<quint16>(wire::Func::HorizontalOn)
-                                 : static_cast<quint16>(wire::Func::HorizontalOff),
-                          QByteArray());
-    refreshModeButtons();
 }
 
 bool CommandPageWidget::gateSend(const QString& name)

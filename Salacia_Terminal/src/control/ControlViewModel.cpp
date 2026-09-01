@@ -326,6 +326,49 @@ void ControlViewModel::requestStopGroup(bool vertical)
                        QByteArray());
 }
 
+void ControlViewModel::requestSafeMode(bool on)
+{
+    if ((safety_ != nullptr) && !safety_->connected()) {
+        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，Safe 开关无法下发"));
+        return;
+    }
+    emit sendRequested(static_cast<quint16>(on ? wire::Func::SafeOn : wire::Func::SafeOff),
+                       QByteArray());
+}
+
+void ControlViewModel::requestAttitudeStab(bool on)
+{
+    if ((safety_ != nullptr) && !safety_->connected()) {
+        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，姿态稳定开关无法下发"));
+        return;
+    }
+    emit sendRequested(static_cast<quint16>(on ? wire::Func::HorizontalOn
+                                               : wire::Func::HorizontalOff),
+                       QByteArray());
+}
+
+void ControlViewModel::requestVerticalSync(bool on)
+{
+    if ((safety_ != nullptr) && !safety_->connected()) {
+        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，垂直同步开关无法下发"));
+        return;
+    }
+    emit sendRequested(static_cast<quint16>(on ? wire::Func::VerticalSyncOn
+                                               : wire::Func::VerticalSyncOff),
+                       QByteArray());
+}
+
+void ControlViewModel::requestHorizontalSync(bool on)
+{
+    if ((safety_ != nullptr) && !safety_->connected()) {
+        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，水平同步开关无法下发"));
+        return;
+    }
+    emit sendRequested(static_cast<quint16>(on ? wire::Func::HorizontalSyncOn
+                                               : wire::Func::HorizontalSyncOff),
+                       QByteArray());
+}
+
 void ControlViewModel::requestEstop()
 {
     if ((safety_ != nullptr)
