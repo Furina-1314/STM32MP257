@@ -237,8 +237,8 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     formHost->setLayout(formColumn);
     body->addWidget(formHost, 3);
 
-    // ---- 控制区（复用主页组件）----
-    controlArea_ = new ControlAreaWidget(vm_, safety_, false, this);
+    // ---- 控制区（复用主页组件；水平滑条行布局防窗口过宽）----
+    controlArea_ = new ControlAreaWidget(vm_, safety_, false, Qt::Horizontal, this);
     body->addWidget(controlArea_, 4);
 
     // 请求被拒（链路不可用等）：乐观显示回到权威状态

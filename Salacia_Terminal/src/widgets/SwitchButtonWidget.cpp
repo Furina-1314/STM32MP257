@@ -62,34 +62,75 @@ void SwitchButtonWidget::showLocked(bool currentOn, const QString& reason)
     applyDisplay(currentOn ? Qt::Checked : Qt::Unchecked, false, false, reason);
 }
 
+namespace {
+
+// 四态 -> 勾选态（Unknown 半选：不得显示为已关闭）
+Qt::CheckState checkStateOf(ModeState state, bool target)
+{
+    switch (state) {
+    case ModeState::On:
+        return Qt::Checked;
+    case ModeState::Off:
+        return Qt::Unchecked;
+    case ModeState::Pending:
+        return target ? Qt::Checked : Qt::Unchecked;
+    case ModeState::Unknown:
+    default:
+        return Qt::PartiallyChecked;
+    }
+}
+
+QString stateText(ModeState state)
+{
+    switch (state) {
+    case ModeState::On:
+        return QString::fromLocal8Bit("已开启");
+    case ModeState::Off:
+        return QString::fromLocal8Bit("已关闭");
+    case ModeState::Pending:
+        return QString::fromLocal8Bit("请求中...");
+    case ModeState::Unknown:
+    default:
+        return QString::fromLocal8Bit("状态未知");
+    }
+}
+
+} // namespace
+
 void SwitchButtonWidget::bind(SafetyStateModel* model, SwitchId id)
 {
     const ModeState state = model->switchState(id);
     const bool target = model->switchDisplayedTarget(id);
-    // Safe 单向联动红线：Safe ON 期间姿态稳定保持 ON + 禁用 + 说明
-    if ((id == SwitchId::AttitudeStab) && (state == ModeState::On)
+
+    // Safe 单向联动红线：Safe ON 期间姿态稳定保持 ON + 禁用 + 说明；
+    // Safe ON 且姿态稳定 OFF 为非法权威组合（模型已锁推进器并高等级告警）
+    if ((id == SwitchId::AttitudeStab)
         && (model->switchState(SwitchId::Safe) == ModeState::On)) {
-        showLocked(true, QString::fromLocal8Bit("Safe 模式要求姿态稳定开启"));
+        if (state == ModeState::On) {
+            showLocked(true, QString::fromLocal8Bit("Safe 模式要求姿态稳定开启"));
+            return;
+        }
+        if (state == ModeState::Off) {
+            showLocked(false, QString::fromLocal8Bit(
+                    "非法权威状态（Safe=ON 且姿态稳定=OFF），推进器已锁定"));
+            return;
+        }
+        // Pending：SafeOn 联动事务进行中，走通用四态
+    }
+
+    // 总使能联动：总使能非 ON（OFF/Pending/Unknown）时垂直/水平使能开关置灰，
+    // 保留权威勾选显示并说明原因（总使能 OFF 期间禁止发起分组 Move）
+    if (((id == SwitchId::VerticalEnable) || (id == SwitchId::HorizontalEnable))
+        && (model->switchState(SwitchId::GlobalEnable) != ModeState::On)) {
+        applyDisplay(checkStateOf(state, target), state == ModeState::Pending,
+                     false,
+                     stateText(state) + QString::fromLocal8Bit("（总使能非 ON）"));
         return;
     }
-    switch (state) {
-    case ModeState::On:
-        applyDisplay(Qt::Checked, false, true, QString::fromLocal8Bit("已开启"));
-        break;
-    case ModeState::Off:
-        applyDisplay(Qt::Unchecked, false, true, QString::fromLocal8Bit("已关闭"));
-        break;
-    case ModeState::Pending:
-        applyDisplay(target ? Qt::Checked : Qt::Unchecked, true, false,
-                     QString::fromLocal8Bit("请求中..."));
-        break;
-    case ModeState::Unknown:
-    default:
-        // Unknown 不得显示为已关闭：半选态 + 禁用 + 状态未知
-        applyDisplay(Qt::PartiallyChecked, false, false,
-                     QString::fromLocal8Bit("状态未知"));
-        break;
-    }
+
+    applyDisplay(checkStateOf(state, target), state == ModeState::Pending,
+                 (state == ModeState::On) || (state == ModeState::Off),
+                 stateText(state));
 }
 
 } // namespace salacia

@@ -39,6 +39,7 @@ public:
     explicit ControlAreaWidget(ControlViewModel* viewModel,
                                SafetyStateModel* safety,
                                bool withEmergencyArea,
+                               Qt::Orientation sliderOrientation = Qt::Vertical,
                                QWidget* parent = nullptr);
 
     void refreshPermissions(); // SafetyStateModel::stateChanged -> 此处
@@ -82,6 +83,7 @@ private:
 
     ControlViewModel* vm_ = nullptr;
     SafetyStateModel* safety_ = nullptr;
+    Qt::Orientation orientation_ = Qt::Vertical; // 滑条方向（主页竖直/指令页水平）
 
     QVector<RowUi> servoRows_;
     QGroupBox* servoGroup_ = nullptr;

@@ -269,7 +269,8 @@ QWidget* MainWindow::createHomePage()
     topSplit->setStretchFactor(1, 1);
     topSplit->setCollapsible(1, false);
 
-    controlArea_ = new ControlAreaWidget(controlVm_.get(), safety_.get(), true, page);
+    controlArea_ = new ControlAreaWidget(controlVm_.get(), safety_.get(), true,
+                                         Qt::Vertical, page);
 
     auto* mainSplit = new QSplitter(Qt::Vertical, page);
     mainSplit->addWidget(topSplit);
