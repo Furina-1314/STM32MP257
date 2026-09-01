@@ -174,8 +174,9 @@ void ControlViewModel::requestEstop()
         emit permissionBlocked(QString::fromLocal8Bit("链路不可用，紧急停机无法下发"));
         return;
     }
-    // 单帧 10+6 零值，绕过合并节拍；TcpClient 紧急队列保证最高优先级
-    emit estopRequested(wire::encodeEstop(servoCount(), thrusterCount()));
+    // 载荷为空：Estop 仅六路推进器置零，绝不携带舵机角度；
+    // 绕过合并节拍，TcpClient 紧急队列保证最高优先级
+    emit estopRequested(QByteArray());
 }
 
 void ControlViewModel::requestEmergency()
@@ -191,11 +192,11 @@ void ControlViewModel::requestEmergency()
 void ControlViewModel::sendServoNow(int id)
 {
     wire::ServoSetCmd cmd;
-    cmd.id = static_cast<quint8>(id);
+    cmd.id = wire::servoWireId(id); // UI 编号 1..10 -> wire 0..9
     cmd.angleDeg = static_cast<quint16>(servos_.at(id - 1).target);
     const QByteArray payload = wire::encodeServoSet(cmd);
     if (payload.isEmpty()) {
-        return; // 值域校验失败（编码器拒绝）
+        return; // 值域/ID 校验失败（编码器拒绝）
     }
     servos_[id - 1].sent = servos_.at(id - 1).target;
     emit sendRequested(static_cast<quint16>(wire::Func::ServoSet), payload);
@@ -204,7 +205,9 @@ void ControlViewModel::sendServoNow(int id)
 void ControlViewModel::sendThrusterNow(int id)
 {
     wire::PropellerSetCmd cmd;
-    cmd.id = static_cast<quint8>(id);
+    // 扁平序号 1..6 -> wire 10..15（前 4 垂直、后 2 水平；Phase 15 拆分组后由
+    // 分组助手替代此桥接）
+    cmd.id = wire::thrusterWireIdFromFlat(id);
     cmd.valuePct = static_cast<qint16>(thrusters_.at(id - 1).target);
     const QByteArray payload = wire::encodePropellerSet(cmd);
     if (payload.isEmpty()) {
@@ -216,15 +219,16 @@ void ControlViewModel::sendThrusterNow(int id)
 
 void ControlViewModel::sendBaseNow()
 {
-    const QByteArray payload = wire::encodeBaseValue(thrusterCount(),
-                                                     static_cast<qint16>(baseTarget_));
+    // 姿态稳定基准 2×i16（垂直、水平）；Phase 15 拆双基准滑条前双组暂同值
+    const QByteArray payload = wire::encodeBaseValueVH(
+            static_cast<qint16>(baseTarget_), static_cast<qint16>(baseTarget_));
     if (payload.isEmpty()) {
         return;
     }
     for (ChannelVm& ch : thrusters_) {
         ch.sent = baseTarget_; // 基准值即全部推进器的已发送值
     }
-    emit sendRequested(static_cast<quint16>(wire::Func::BaseValue), payload);
+    emit sendRequested(static_cast<quint16>(wire::Func::BaseValueVH), payload);
 }
 
 void ControlViewModel::flushPending()
@@ -252,13 +256,17 @@ void ControlViewModel::onFrameSent(quint16 seq, quint16 funcId,
     SentTrack track;
     if (funcId == static_cast<quint16>(wire::Func::ServoSet)) {
         track.kind = 0;
-        track.id = payload.isEmpty() ? 0 : static_cast<int>(static_cast<quint8>(payload.at(0)));
+        // payload 首字节为 wire id（0..9），转 UI 编号回填
+        track.id = payload.isEmpty()
+                ? 0 : wire::servoUiNumber(static_cast<quint8>(payload.at(0)));
         track.value = servos_.value(track.id - 1).sent;
     } else if (funcId == static_cast<quint16>(wire::Func::PropellerSet)) {
         track.kind = 1;
-        track.id = payload.isEmpty() ? 0 : static_cast<int>(static_cast<quint8>(payload.at(0)));
+        // payload 首字节为 wire id（10..15），转扁平序号回填
+        track.id = payload.isEmpty()
+                ? 0 : wire::thrusterFlatFromWireId(static_cast<quint8>(payload.at(0)));
         track.value = thrusters_.value(track.id - 1).sent;
-    } else if (funcId == static_cast<quint16>(wire::Func::BaseValue)) {
+    } else if (funcId == static_cast<quint16>(wire::Func::BaseValueVH)) {
         track.kind = 2;
         track.value = baseTarget_;
     } else {

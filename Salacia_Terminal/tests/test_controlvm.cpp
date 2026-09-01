@@ -104,7 +104,7 @@ void TestControlVm::rateLimitCoalesce()
              static_cast<uint>(static_cast<quint16>(Func::PropellerSet)));
     const QByteArray payload = sendSpy.first().at(1).toByteArray();
     bool ok = false;
-    QCOMPARE(static_cast<quint8>(payload.at(0)), 2U);       // id=2
+    QCOMPARE(static_cast<quint8>(payload.at(0)), 11U);     // 扁平 2 -> wire 11（垂直2）
     QCOMPARE(getI16(payload, 1, ok), 90);                   // 最新值
     QVERIFY(ok);
     QCOMPARE(vm.thruster(2).sent, 90);
@@ -159,28 +159,27 @@ void TestControlVm::horizontalBaseSwitch()
     safety.applyAuthoritative(wire::kStateHorizontal);
     vm.onHorizontalChanged(true);
     QTest::qWait(250); // 50ms 节拍 + 负载余量
-    // 隐藏控件的旧值不得发送（红线）：sendSpy 不得出现 id=2 的逐路帧
+    // 隐藏控件的旧值不得发送（红线）：sendSpy 不得出现 wire 11（扁平 2）的逐路帧
     for (const auto& args : sendSpy) {
         if (args.at(0).toUInt() == static_cast<uint>(static_cast<quint16>(Func::PropellerSet))) {
             const QByteArray payload = args.at(1).toByteArray();
-            QVERIFY2(static_cast<quint8>(payload.at(0)) != 2U,
+            QVERIFY2(static_cast<quint8>(payload.at(0)) != 11U,
                      "hidden channel stale value must not be sent");
         }
     }
 
-    // 基准滑条：单帧 6 路相同值
+    // 基准滑条：BaseValueVH 单帧 2×i16（Phase 15 拆双基准前双组同值）
     QSignalSpy baseSpy(&vm, &ControlViewModel::baseUpdated);
     QVERIFY(vm.setBaseTarget(-35, true));
     QCOMPARE(sendSpy.count(), 2);
     const QByteArray basePayload = sendSpy.last().at(1).toByteArray();
     QCOMPARE(sendSpy.last().at(0).toUInt(),
-             static_cast<uint>(static_cast<quint16>(Func::BaseValue)));
-    QCOMPARE(basePayload.size(), 12);
+             static_cast<uint>(static_cast<quint16>(Func::BaseValueVH)));
+    QCOMPARE(basePayload.size(), 4);
     bool ok = false;
-    for (int i = 0; i < 6; ++i) {
-        QCOMPARE(getI16(basePayload, i * 2, ok), -35);
-        QVERIFY(ok);
-    }
+    QCOMPARE(getI16(basePayload, 0, ok), -35);
+    QCOMPARE(getI16(basePayload, 2, ok), -35);
+    QVERIFY(ok);
     QVERIFY(baseSpy.count() >= 1);
 }
 
@@ -205,7 +204,7 @@ void TestControlVm::estopDirectBypassQueue()
     vm.requestEstop();
     QCOMPARE(estopSpy.count(), 1);
     const QByteArray payload = estopSpy.first().at(0).toByteArray();
-    QCOMPARE(payload.size(), 32); // 10+6 全零单帧
+    QCOMPARE(payload.size(), 0); // 空载荷：仅推进器置零，不含舵机角度
     QVERIFY(!vm.estopConfirmRequired()); // ini: estop_confirm=false
 
     // 断线后 estop 拒绝

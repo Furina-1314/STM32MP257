@@ -49,6 +49,7 @@ private slots:
     void servoSetRoundtrip();
     void estopSingleFrame();
     void priorityWhileConnecting();
+    void urgentOrderWithinQueue();
     void ackMatching();
     void timeoutAndLateAck();
     void sensorStreamHighRate();
@@ -128,17 +129,15 @@ void TestTcpClient::estopSingleFrame()
 
     QSignalSpy frameSpy(&mock, &MockA35::gotFrame);
     const int before = mock.received().size();
-    client.sendFrame(static_cast<quint16>(Func::Estop), encodeEstop(10, 6));
+    // Estop 空载荷：仅推进器置零语义，绝不携带舵机角度
+    client.sendFrame(static_cast<quint16>(Func::Estop), QByteArray());
     QVERIFY(waitForSpy(frameSpy, 2000));
     QTest::qWait(150);
     int estopCount = 0;
     for (int i = before; i < mock.received().size(); ++i) {
         if (mock.received().at(i).first == static_cast<quint16>(Func::Estop)) {
             ++estopCount;
-            QCOMPARE(mock.received().at(i).second.size(), 32); // 10*u16 + 6*i16
-            for (int b = 0; b < 32; ++b) {
-                QCOMPARE(mock.received().at(i).second.at(b), char(0)); // 全零值
-            }
+            QCOMPARE(mock.received().at(i).second.size(), 0); // 载荷为空（无舵机字节）
         }
     }
     QCOMPARE(estopCount, 1); // 严格单帧
@@ -152,10 +151,10 @@ void TestTcpClient::priorityWhileConnecting()
     TcpClient client;
     // 客户端启动后立即入队：普通控制 5 帧 + estop——建立连接后 estop 必须最先到达
     PropellerSetCmd cmd;
-    cmd.id = 3U;
+    cmd.id = 12U; // wire 12 = 垂直3（UI）
     cmd.valuePct = 40;
     const QByteArray normal = encodePropellerSet(cmd);
-    const QByteArray urgent = encodeEstop(10, 6);
+    const QByteArray urgent; // estop 空载荷
     const int before = mock.received().size();
     client.start(fastSettings(mock.port()));
     for (int i = 0; i < 5; ++i) {
@@ -182,6 +181,58 @@ void TestTcpClient::priorityWhileConnecting()
     }
     QVERIFY(firstControl >= 0);
     QCOMPARE(all.at(firstControl).first, static_cast<quint16>(Func::Estop));
+    client.stop();
+}
+
+void TestTcpClient::urgentOrderWithinQueue()
+{
+    MockA35 mock;
+    QVERIFY(mock.start());
+    TcpClient client;
+
+    // 入队顺序刻意逆序（普通 -> StopAll -> Emergency -> Estop）：
+    // 紧急队列按优先级稳定排序，到达次序必须为 Estop > Emergency > StopAll
+    PropellerSetCmd cmd;
+    cmd.id = 11U; // wire 11 = 垂直2（UI）
+    cmd.valuePct = 30;
+    const QByteArray normal = encodePropellerSet(cmd);
+    const int before = mock.received().size();
+    client.start(fastSettings(mock.port()));
+    for (int i = 0; i < 4; ++i) {
+        client.sendFrame(static_cast<quint16>(Func::PropellerSet), normal);
+    }
+    client.sendFrame(static_cast<quint16>(Func::StopAll), QByteArray());
+    client.sendFrame(static_cast<quint16>(Func::Emergency), QByteArray());
+    client.sendFrame(static_cast<quint16>(Func::Estop), QByteArray());
+
+    // 等待全部到达（4 普通 + 3 紧急 + 3 权威查询）
+    const int expectedTotal = 4 + 3 + 3;
+    for (int guard = 0; guard < 400; ++guard) {
+        if (mock.received().size() - before >= expectedTotal) {
+            break;
+        }
+        QTest::qWait(10);
+    }
+    const auto& all = mock.received();
+    int estopIdx = -1;
+    int emgIdx = -1;
+    int stopIdx = -1;
+    for (int i = before; i < all.size(); ++i) {
+        const quint16 f = all.at(i).first;
+        if (f == static_cast<quint16>(Func::Estop)) {
+            estopIdx = i;
+        } else if (f == static_cast<quint16>(Func::Emergency)) {
+            emgIdx = i;
+        } else if (f == static_cast<quint16>(Func::StopAll)) {
+            stopIdx = i;
+        }
+    }
+    QVERIFY(estopIdx >= 0);
+    QVERIFY(emgIdx >= 0);
+    QVERIFY(stopIdx >= 0);
+    // 插队次序红线：Estop > Emergency > Stop/Move
+    QVERIFY2(estopIdx < emgIdx, "estop must precede emergency");
+    QVERIFY2(emgIdx < stopIdx, "emergency must precede stop all");
     client.stop();
 }
 

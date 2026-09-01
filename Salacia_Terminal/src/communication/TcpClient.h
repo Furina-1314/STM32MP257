@@ -27,8 +27,9 @@ namespace salacia {
 //  - stop() 为"工作线程自终结 + 主线程限时阶梯"（禁 BlockingQueuedConnection）。
 //
 // 发送策略（低延迟红线）：
-//  - 双优先级队列：estop/emergency（priority < kPriorityNormal）插队，永不因
-//    队列溢出被丢弃；普通控制溢出丢最旧；
+//  - 双优先级队列：紧急通道（priority < kPriorityNormal，即 estop/emergency/
+//    stop-move）插队且内部按优先级稳定排序，永不因队列溢出被丢弃；
+//    普通控制溢出丢最旧；
 //  - seq 在实际出队编码时分配（单调递增，0-65535 回绕）；
 //  - 需 ACK 的请求进入挂起表，超时发 requestTimedOut；迟到响应只计数丢弃；
 //  - 断开瞬间清空发送队列与挂起表（不重放危险指令红线）；重连成功后自动
@@ -100,6 +101,13 @@ private:
         qint64 sentAtMs = 0;
     };
 
+    // 发送队列条目：携带优先级（紧急队列按优先级稳定排序，小者先出）
+    struct QueuedFrame
+    {
+        wire::WireFrame frame;
+        int priority = wire::kPriorityNormal;
+    };
+
     void enqueueLocked(quint16 funcId, const QByteArray& payload);
     void writeFrameNow(quint16 funcId, quint8 flags, const QByteArray& payload);
     void clearQueuesLocked();
@@ -110,8 +118,9 @@ private:
 
     // ---- 任意线程访问（互斥）----
     std::mutex queueMutex_;
-    std::vector<wire::WireFrame> urgentQueue_;  // estop/emergency（有界，永不丢）
-    std::vector<wire::WireFrame> normalQueue_;  // 普通控制（有界，溢出丢最旧）
+    std::vector<QueuedFrame> urgentQueue_;  // estop/emergency/stop-move（按优先级
+                                            // 稳定排序插入，永不丢弃）
+    std::vector<QueuedFrame> normalQueue_;  // 普通控制（有界，溢出丢最旧）
 
     // ---- 工作线程私有 ----
     QTcpSocket* socket_ = nullptr;

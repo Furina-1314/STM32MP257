@@ -90,9 +90,9 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     {
         auto* group = new QGroupBox(QString::fromLocal8Bit("安全"), this);
         auto* lay = new QHBoxLayout(group);
-        stopBtn_ = new QPushButton(QString::fromLocal8Bit("stop 正常停止"), group);
+        stopBtn_ = new QPushButton(QString::fromLocal8Bit("stop all 推进器停止"), group);
         estopBtn_ = new QPushButton(QString::fromLocal8Bit("estop 紧急停机"), group);
-        emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("emergency 紧急上浮"), group);
+        emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("emergency 紧急停机（高优先级）"), group);
         estopBtn_->setStyleSheet(QStringLiteral(
                 "QPushButton { background:#8c2f2f; color:white; font-weight:bold; }"));
         emergencyBtn_->setStyleSheet(QStringLiteral(
@@ -103,8 +103,8 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         lay->addStretch(1);
         formColumn->addWidget(group);
         connect(stopBtn_, &QPushButton::clicked, this, [this] {
-            if (gateSend(QStringLiteral("stop"))) {
-                emit commandRequested(static_cast<quint16>(wire::Func::Stop), QByteArray());
+            if (gateSend(QStringLiteral("stop all"))) {
+                emit commandRequested(static_cast<quint16>(wire::Func::StopAll), QByteArray());
             }
         });
         connect(estopBtn_, &QPushButton::clicked, this, [this] {
@@ -180,9 +180,10 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         auto col1 = new QWidget(group);
         auto l1 = new QVBoxLayout(col1);
         servoGetIdSpin_ = new QSpinBox(col1);
-        servoGetIdSpin_->setRange(0, 255);
+        servoGetIdSpin_->setRange(0, wire::kServoCount); // 0=全部；1..10=UI 编号
         servoGetIdSpin_->setValue(0);
-        auto b1 = new QPushButton(QString::fromLocal8Bit("get servo <0=all|id>"), col1);
+        auto b1 = new QPushButton(
+                QString::fromLocal8Bit("get servo <0=all|UI 1-10>"), col1);
         l1->addWidget(servoGetIdSpin_);
         l1->addWidget(b1);
         connect(b1, &QPushButton::clicked, this, &CommandPageWidget::sendServoGet);
@@ -193,9 +194,10 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         propKindCombo_->addItem(QStringLiteral("base"));
         propKindCombo_->addItem(QStringLiteral("real"));
         propGetIdSpin_ = new QSpinBox(col2);
-        propGetIdSpin_->setRange(0, 255);
-        propGetIdSpin_->setValue(1);
-        auto b2 = new QPushButton(QString::fromLocal8Bit("get propeller <id> base/real"), col2);
+        propGetIdSpin_->setRange(wire::kVerticalIdFirst, wire::kHorizontalIdLast); // wire 10..15
+        propGetIdSpin_->setValue(wire::kVerticalIdFirst);
+        auto b2 = new QPushButton(
+                QString::fromLocal8Bit("get propeller <wire 10-15> base/real"), col2);
         l2->addWidget(propKindCombo_);
         l2->addWidget(propGetIdSpin_);
         l2->addWidget(b2);
@@ -478,12 +480,15 @@ void CommandPageWidget::sendServoGet()
     if (!gateSend(QStringLiteral("get servo"))) {
         return;
     }
+    const int value = servoGetIdSpin_->value();
+    if (value == 0) {
+        // 0 = 全部：ServoGetAll 空载荷（列表查询无逐台 id）
+        emit commandRequested(static_cast<quint16>(wire::Func::ServoGetAll), QByteArray());
+        return;
+    }
     QByteArray payload;
-    payload.append(static_cast<char>(static_cast<quint8>(servoGetIdSpin_->value())));
-    const quint16 func = (servoGetIdSpin_->value() == 0)
-            ? static_cast<quint16>(wire::Func::ServoGetAll)
-            : static_cast<quint16>(wire::Func::ServoGet);
-    emit commandRequested(func, payload);
+    payload.append(static_cast<char>(wire::servoWireId(value))); // UI 1..10 -> wire 0..9
+    emit commandRequested(static_cast<quint16>(wire::Func::ServoGet), payload);
 }
 
 void CommandPageWidget::sendPropellerGet()

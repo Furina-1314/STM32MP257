@@ -62,13 +62,13 @@ public:
 
 struct ServoSetCmd            // set servo <id> <angle>
 {
-    quint8 id = 0U;           // 0 = all
+    quint8 id = 0U;           // wire 0..9（"全部"走 ServoSetAll，本命令无广播语义）
     quint16 angleDeg = 90U;   // 0-180
 };
 
 struct PropellerSetCmd        // set propeller <id> <value>
 {
-    quint8 id = 0U;           // 0 = all
+    quint8 id = 0U;           // wire 10..15（10-13 垂直 / 14-15 水平，无广播语义）
     qint16 valuePct = 0;      // -100..+100
 };
 
@@ -97,21 +97,22 @@ struct AlarmEventResult          // A35 主动告警事件（0x0103 草案载荷）
     QString text;                // UTF-8 文本
 };
 
-// ---- 编码（值域校验失败返回空 QByteArray，调用方不得发送）----
-QByteArray encodeServoSet(const ServoSetCmd& cmd);
-QByteArray encodeServoMid(quint8 id);
-QByteArray encodePropellerSet(const PropellerSetCmd& cmd);
-QByteArray encodePropellerStop(quint8 id);
-// estop：单帧携带 servoCount 路舵机零值 + thrusterCount 路推进器零值
-QByteArray encodeEstop(int servoCount, int thrusterCount);
-// horizontal on 统一基准值：单帧 thrusterCount 路相同基准
-QByteArray encodeBaseValue(int thrusterCount, qint16 valuePct);
+// ---- 编码（值域/ID 校验失败返回空 QByteArray，调用方不得发送）----
+QByteArray encodeServoSet(const ServoSetCmd& cmd);   // id 0..9
+QByteArray encodeServoMid(quint8 id);                // id 0..9 或 kIdBroadcast
+QByteArray encodePropellerSet(const PropellerSetCmd& cmd); // id 10..15
+QByteArray encodePropellerStop(quint8 id);           // id 10..15 或 kIdBroadcast
+// Stop/Estop/Emergency/Stop-Move 类安全命令载荷一律为空（仅推进器置零/锁存语义，
+// 绝不携带舵机角度；调用方直接发空 QByteArray）
+// 姿态稳定统一基准：2×i16（垂直基准、水平基准）
+QByteArray encodeBaseValueVH(qint16 verticalPct, qint16 horizontalPct);
 QByteArray encodeHeartbeat(quint32 clientTimeMs);
 
 // ---- 解码（长度/枚举/值域/NaN 校验失败返回 false，调用方丢弃并告警）----
 bool decodeSensorSummary(const QByteArray& payload, SensorSummary& out);
 bool decodeAck(const QByteArray& payload, AckResult& out);
-bool decodeStateEvent(const QByteArray& payload, quint8& stateMask);
+bool decodeStateEvent(const QByteArray& payload, quint8& stateMask);    // legacy 0x0102
+bool decodeStateEventV2(const QByteArray& payload, quint16& stateMask); // 0x0104
 bool decodeAlarmEvent(const QByteArray& payload, AlarmEventResult& out);
 bool decodeAngleList(const QByteArray& payload, std::vector<qint16>& out);
 bool decodePropellerList(const QByteArray& payload, std::vector<qint16>& out);

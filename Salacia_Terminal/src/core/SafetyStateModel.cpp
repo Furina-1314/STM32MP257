@@ -19,7 +19,7 @@ bool SafetyStateModel::modeFunc(quint16 funcId)
     case wire::Func::HorizontalOff:
     case wire::Func::Estop:
     case wire::Func::Emergency:
-    case wire::Func::Stop:
+    case wire::Func::StopAll:
         return true;
     default:
         return false;

@@ -293,14 +293,14 @@ void TestPhase6::measureEstopJumpLatency()
     const int before = mock.received().size();
 
     PropellerSetCmd cmd;
-    cmd.id = 2U;
+    cmd.id = 12U; // wire 12 = ¥π÷±3£®UI£©
     cmd.valuePct = 30;
     const QByteArray normal = encodePropellerSet(cmd);
     for (int i = 0; i < 40; ++i) {
         client.sendFrame(static_cast<quint16>(Func::PropellerSet), normal);
     }
     const qint64 estopSentAt = QDateTime::currentMSecsSinceEpoch();
-    client.sendFrame(static_cast<quint16>(Func::Estop), encodeEstop(10, 6));
+    client.sendFrame(static_cast<quint16>(Func::Estop), QByteArray()); // ø’‘ÿ∫…
 
     int estopIdx = -1;
     for (int guard = 0; guard < 200 && estopIdx < 0; ++guard) {
