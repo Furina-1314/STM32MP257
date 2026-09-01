@@ -135,6 +135,7 @@ public:
     int alarmMaxItems() const { return alarmMaxItems_; }
     int alarmMergeWindowMs() const { return alarmMergeWindowMs_; }
     bool alarmLogEnabled() const { return alarmLogEnabled_; }
+    int alarmPanelMaxHeight() const { return alarmPanelMaxHeight_; }
 
     // ---- [ui] 主题/刷新/精度/样式 ----
     QString uiTheme() const { return uiTheme_; }             // light / dark
@@ -305,6 +306,7 @@ private:
     std::atomic<int> alarmMaxItems_{200};            // 实时
     std::atomic<int> alarmMergeWindowMs_{5000};      // 实时
     bool alarmLogEnabled_ = true;
+    int alarmPanelMaxHeight_ = 260; // 展开面板限高（窗口尺寸不变红线配套）
 
     // [ui]
     QString uiTheme_ = QStringLiteral("light");

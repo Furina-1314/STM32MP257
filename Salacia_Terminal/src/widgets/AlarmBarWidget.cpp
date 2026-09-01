@@ -11,6 +11,8 @@
 #include <QTableWidget>
 #include <QVBoxLayout>
 
+#include "core/AppConfig.h"
+
 namespace salacia {
 
 namespace {
@@ -132,24 +134,16 @@ quint8 AlarmBarWidget::filterMask() const
 
 void AlarmBarWidget::toggleExpanded()
 {
-    // 保持窗口尺寸不变：展开/收起仅调整内部布局，不改变窗口几何。
-    // 最大化时窗口保持最大化；非最大化时恢复原矩形。
-    QWidget* topLevel = window();
-    const bool wasMax = (topLevel != nullptr) && topLevel->isMaximized();
-    const QRect savedGeo = (topLevel != nullptr) ? topLevel->normalGeometry()
-                                                 : QRect();
-
+    // 展开/收起只压缩窗口内部内容区：禁止 resize/adjustSize/setGeometry 等
+    // 顶层窗口调用（窗口尺寸与最大化状态不变红线）；面板限高由 [alarms]
+    // panel_max_height 控制，布局在客户区内自适应
     expanded_ = !expanded_;
     panel_->setVisible(expanded_);
-    panel_->setMaximumHeight(260); // 限高防撑大窗口最小尺寸
+    panel_->setMaximumHeight(AppConfig::instance().alarmPanelMaxHeight());
     expandBtn_->setText(expanded_ ? QString::fromLocal8Bit("收起")
                                   : QString::fromLocal8Bit("展开"));
     if (expanded_) {
         rebuildTable();
-    }
-
-    if ((!wasMax) && (topLevel != nullptr) && !savedGeo.isNull()) {
-        topLevel->setGeometry(savedGeo);
     }
 }
 

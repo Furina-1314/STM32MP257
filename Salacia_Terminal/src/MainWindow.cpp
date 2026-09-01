@@ -132,17 +132,13 @@ MainWindow::MainWindow(QWidget* parent)
     nav_->setSelectedPageIndex(0);
 
     connect(navToggleBtn_, &QPushButton::clicked, this, [this] {
-        // 保持窗口尺寸不变：记录当前几何，切换后恢复（含最大化/全屏状态不破坏）
-        const bool wasMax = isMaximized();
-        const QRect savedGeo = normalGeometry();
+        // 折叠/展开只改变窗口内部布局：禁止 resize/adjustSize/setFixedSize/
+        // showNormal/showMaximized/setGeometry 等顶层窗口调用（窗口尺寸与
+        // 最大化状态不变红线），Qt 布局在客户区内自适应
         const bool expanded = nav_->navigationExpanded();
         nav_->setNavigationExpanded(!expanded);
         navToggleBtn_->setText(expanded ? QString::fromLocal8Bit("展开菜单")
                                         : QString::fromLocal8Bit("收起菜单"));
-        if (!wasMax) {
-            setGeometry(savedGeo); // 非最大化：恢复原窗口矩形
-        }
-        // 最大化时 setGeometry 会破坏全屏状态——不调即可（Qt 布局在客户区内自适应）
     });
 
     // ---- 状态栏 ----

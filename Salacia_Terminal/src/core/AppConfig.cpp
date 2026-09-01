@@ -223,6 +223,8 @@ bool AppConfig::load(const QString& explicitPath)
     alarmMergeWindowMs_.store(boundedInt(ini, "alarms/merge_window_ms",
                                          alarmMergeWindowMs_.load(), 0, 600000));
     alarmLogEnabled_ = ini.value(QStringLiteral("alarms/log_alarms"), alarmLogEnabled_).toBool();
+    alarmPanelMaxHeight_ = boundedInt(ini, "alarms/panel_max_height",
+                                      alarmPanelMaxHeight_, 100, 600);
 
     // ---- [ui] ----
     uiTheme_ = ini.value(QStringLiteral("ui/theme"), uiTheme_).toString().toLower();
