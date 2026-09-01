@@ -55,7 +55,7 @@ bool ControlViewModel::checkServoAllowed()
 {
     if ((safety_ != nullptr) && !safety_->canServoIndividual()) {
         emit permissionBlocked(
-                QString::fromLocal8Bit("当前模式下舵机逐路控制不可用（safe/estop/emergency/断线）"));
+                QString::fromLocal8Bit("链路不可用，舵机控制无法下发（断线）"));
         return false;
     }
     return true;
@@ -65,8 +65,8 @@ bool ControlViewModel::checkThrusterAllowed()
 {
     if ((safety_ != nullptr) && !safety_->canThrusterIndividual()) {
         emit permissionBlocked(
-                QString::fromLocal8Bit("当前模式下推进器逐路控制不可用（horizontal on 走基准滑条，"
-                                       "safe/estop/emergency/断线为禁用）"));
+                QString::fromLocal8Bit("推进器逐路控制不可用（姿态稳定开启走基准滑条，"
+                                       "或使能开关非 ON/请求中，或链路异常）"));
         return false;
     }
     return true;
@@ -76,7 +76,7 @@ bool ControlViewModel::checkBaseAllowed()
 {
     if ((safety_ != nullptr) && !safety_->canBaseSlider()) {
         emit permissionBlocked(
-                QString::fromLocal8Bit("基准滑条仅在 horizontal on 且非 safe 时可用"));
+                QString::fromLocal8Bit("基准滑条仅在姿态稳定开启且推进器使能可用时可用"));
         return false;
     }
     return true;
@@ -183,7 +183,7 @@ void ControlViewModel::requestEmergency()
 {
     if ((safety_ != nullptr)
         && (safety_->emergencyButton() == EmergencyButtonState::Disabled)) {
-        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，紧急上浮无法下发"));
+        emit permissionBlocked(QString::fromLocal8Bit("链路不可用，紧急停机无法下发"));
         return;
     }
     emit emergencyRequested();

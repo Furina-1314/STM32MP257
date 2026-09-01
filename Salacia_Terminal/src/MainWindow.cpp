@@ -180,6 +180,24 @@ MainWindow::MainWindow(QWidget* parent)
         controlArea_->refreshPermissions();
         commandPage_->refreshModeButtons();
     }, Qt::QueuedConnection);
+    // 开关事务回退：窗口级提示 + 告警（ExInfoBar 弹窗经 alarmsChanged 链统一触发）
+    connect(safety_.get(), &SafetyStateModel::modeRejected, this,
+            [this](quint16 funcId, quint16 errCode) {
+                const wire::FunctionEntry* entry =
+                        wire::FunctionRegistry::findByFuncId(funcId);
+                const QString name = (entry != nullptr)
+                        ? QString::fromLatin1(entry->name) : QStringLiteral("unknown");
+                const QString text = QString::fromLocal8Bit(
+                        "开关请求被拒（%1，错误码 %2），已回退原状态")
+                        .arg(name).arg(errCode);
+                Logger::warning(text);
+                alarmModel_->add(AlarmLevel::Warning, QStringLiteral("mode"), text);
+            }, Qt::QueuedConnection);
+    connect(safety_.get(), &SafetyStateModel::authorityConflict, this,
+            [this](const QString& detail) {
+                Logger::error(QString::fromLocal8Bit("权威状态冲突：%1").arg(detail));
+                alarmModel_->add(AlarmLevel::Error, QStringLiteral("authority"), detail);
+            }, Qt::QueuedConnection);
 
     connect(commandPage_, &CommandPageWidget::commandRequested, this,
             [this](quint16 funcId, const QByteArray& payload) {
@@ -470,10 +488,20 @@ void MainWindow::connectTcpFace()
                 DataManager::instance().setRovState(state);
             }, Qt::QueuedConnection);
 
-    // A35 主动事件：StateEvent -> 权威状态；AlarmEvent -> 告警中心
+    // A35 主动事件：StateEventV2 -> 权威状态（主链路）；legacy StateEvent 兼容回退；
+    // AlarmEvent -> 告警中心
     connect(tcpClient_.get(), &TcpClient::eventReceived, this,
             [this](quint16 funcId, const QByteArray& payload) {
-                if (funcId == static_cast<quint16>(wire::Func::StateEvent)) {
+                if (funcId == static_cast<quint16>(wire::Func::StateEventV2)) {
+                    quint16 mask = 0U;
+                    if (wire::decodeStateEventV2(payload, mask)) {
+                        safety_->applyAuthoritativeV2(mask);
+                    } else {
+                        alarmModel_->add(AlarmLevel::Warning, QStringLiteral("tcp"),
+                                         QString::fromLocal8Bit(
+                                                 "状态事件 v2 载荷非法（丢弃）"));
+                    }
+                } else if (funcId == static_cast<quint16>(wire::Func::StateEvent)) {
                     quint8 mask = 0U;
                     if (wire::decodeStateEvent(payload, mask)) {
                         safety_->applyAuthoritative(mask);
@@ -579,16 +607,16 @@ void MainWindow::requestEmergencyWithConfirm()
 {
     if (AppConfig::instance().emergencyConfirmEnabled()) {
         const auto answer = ExMessageBox::question(
-                this, QString::fromLocal8Bit("紧急上浮确认"),
+                this, QString::fromLocal8Bit("紧急停机确认"),
                 QString::fromLocal8Bit(
-                        "确认执行受控紧急上浮？\n（水平推进器归零，垂直受限上浮推力）"),
+                        "确认执行紧急停机？\n（六路推进器置零；不改变舵机位置）"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer != QMessageBox::Yes) {
             return;
         }
     }
     controlVm_->requestEmergency();
-    statusBar()->showMessage(QString::fromLocal8Bit("紧急上浮已下发"),
+    statusBar()->showMessage(QString::fromLocal8Bit("紧急停机已下发"),
                              AppConfig::instance().statusMessageShortMs());
 }
 

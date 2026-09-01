@@ -141,6 +141,14 @@ void MockA35::sendStateEvent(quint8 mask)
     sendFrame(static_cast<quint16>(Func::StateEvent), 0U, kFlagEvent, payload);
 }
 
+void MockA35::sendStateEventV2(quint16 mask)
+{
+    QByteArray payload;
+    payload.append(static_cast<char>(kStateEventV2Version));
+    putU16(payload, mask);
+    sendFrame(static_cast<quint16>(Func::StateEventV2), 0U, kFlagEvent, payload);
+}
+
 void MockA35::setAckErrorCodeFor(quint16 funcId, quint16 errCode)
 {
     errorMap_.insert(funcId, errCode);

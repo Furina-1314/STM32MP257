@@ -207,7 +207,7 @@ QWidget* ControlAreaWidget::buildEmergencyArea()
     });
     layout->addWidget(estopBtn_);
 
-    emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("紧急上浮"), area);
+    emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("紧急停机（高优先级）"), area);
     emergencyBtn_->setMinimumHeight(cfg.estopButtonMinHeight());
     emergencyBtn_->setStyleSheet(QStringLiteral(
             "QPushButton { background:#b45309; color:white; font-weight:bold; }"
@@ -306,11 +306,11 @@ void ControlAreaWidget::refreshPermissions()
     }
     if (modeHintLabel_ != nullptr) {
         modeHintLabel_->setText(safety_->controlsLocked()
-                ? QString::fromLocal8Bit("控制已锁定\n（safe/estop/emergency/断线）")
+                ? QString::fromLocal8Bit("等待权威状态\n（断线或未收到状态事件）")
                 : (safety_->safeState() == ModeState::On
                            ? QString::fromLocal8Bit("安全模式已开启")
                            : safety_->horizontalState() == ModeState::On
-                                     ? QString::fromLocal8Bit("姿态控制已开启")
+                                     ? QString::fromLocal8Bit("姿态稳定已开启")
                                      : QString::fromLocal8Bit("普通手动")));
     }
     if (estopBtn_ != nullptr) {
@@ -333,15 +333,15 @@ void ControlAreaWidget::refreshPermissions()
         switch (safety_->emergencyButton()) {
         case EmergencyButtonState::Disabled:
             emergencyBtn_->setEnabled(false);
-            emergencyBtn_->setText(QString::fromLocal8Bit("紧急上浮（无法下发）"));
+            emergencyBtn_->setText(QString::fromLocal8Bit("紧急停机·高（无法下发）"));
             break;
         case EmergencyButtonState::InProgress:
             emergencyBtn_->setEnabled(true);
-            emergencyBtn_->setText(QString::fromLocal8Bit("紧急上浮（进行中）"));
+            emergencyBtn_->setText(QString::fromLocal8Bit("紧急停机·高（进行中）"));
             break;
         default:
             emergencyBtn_->setEnabled(true);
-            emergencyBtn_->setText(QString::fromLocal8Bit("紧急上浮"));
+            emergencyBtn_->setText(QString::fromLocal8Bit("紧急停机（高优先级）"));
             break;
         }
     }

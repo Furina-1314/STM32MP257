@@ -147,7 +147,7 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         // horizontal ÐÐ
         auto* horizontalRow = new QHBoxLayout();
         auto* horizontalLabel =
-                new QLabel(QString::fromLocal8Bit("horizontal ×ËÌ¬¿ØÖÆ"), group);
+                new QLabel(QString::fromLocal8Bit("×ËÌ¬ÎÈ¶¨£¨Horizontal£©"), group);
         horizontalLabel->setFixedWidth(180);
         horizontalSwitch_ = new QCheckBox(group);
         horizontalSwitch_->setProperty("isSwitchButton", true);

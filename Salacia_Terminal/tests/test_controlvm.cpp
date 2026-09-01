@@ -33,11 +33,11 @@ bool loadTestIni()
     return AppConfig::instance().load(path);
 }
 
-// 权限全开的 SafetyStateModel
+// 权限全开的 SafetyStateModel（V2 全清：全使能 ON、稳定/同步 OFF、无紧急）
 void unlock(SafetyStateModel& safety)
 {
     safety.setConnected(true);
-    safety.applyAuthoritative(0U);
+    safety.applyAuthoritativeV2(0U);
 }
 
 } // namespace
@@ -136,11 +136,15 @@ void TestControlVm::permissionBlocks()
     QCOMPARE(sendSpy.count(), 0);
     QCOMPARE(blockSpy.count(), 3);
 
-    // safe on：全部禁用
+    // safe on（姿态稳定联动 ON）：舵机仍可操作（解耦红线）；
+    // 姿态稳定 ON -> 逐路禁用、基准可用
     unlock(safety);
-    safety.applyAuthoritative(wire::kStateSafe);
-    QVERIFY(!vm.setServoTarget(1, 90, true));
-    QCOMPARE(sendSpy.count(), 0);
+    safety.applyAuthoritativeV2(quint16(wire::kStateV2Safe | wire::kStateV2AttitudeStab));
+    QSignalSpy sendSpy2(&vm, &ControlViewModel::sendRequested);
+    QVERIFY(vm.setServoTarget(1, 90, true));     // safe 不锁舵机
+    QVERIFY(!vm.setThrusterTarget(1, 50, true)); // 姿态稳定 ON：逐路禁用
+    QVERIFY(vm.setBaseTarget(50, true));         // 基准可用
+    QCOMPARE(sendSpy2.count(), 2);               // 舵机 + 基准各 1 帧
 }
 
 void TestControlVm::horizontalBaseSwitch()
@@ -154,9 +158,9 @@ void TestControlVm::horizontalBaseSwitch()
     vm.setThrusterTarget(1, 40, true);
     QCOMPARE(sendSpy.count(), 1);
 
-    // 切 horizontal on：清空逐路待发 + 基准可用
+    // 切姿态稳定 on：清空逐路待发 + 基准可用
     vm.setThrusterTarget(2, 60, false); // 留一条待发
-    safety.applyAuthoritative(wire::kStateHorizontal);
+    safety.applyAuthoritativeV2(quint16(wire::kStateV2AttitudeStab));
     vm.onHorizontalChanged(true);
     QTest::qWait(250); // 50ms 节拍 + 负载余量
     // 隐藏控件的旧值不得发送（红线）：sendSpy 不得出现 wire 11（扁平 2）的逐路帧
