@@ -1,10 +1,24 @@
 # Salacia_Terminal 交接文档（HANDOFF）
 
-> 生成时间：2026-08-30（**Phase 0-6 全部完成**；更新于 Phase 6 验收后）
-> 用途：完整上下文交接。剩余：A35 实机对接（接口 10 项待确认）、SOC 标定、版本元数据、git 提交/PR（用户决定）。
-> 最新：Phase 11（UI 精修 II）2026-08-31 完成——窗口尺寸保持 / SwitchButton+ProgressRing / Gallery 关于页 / ExInfoBar 告警弹窗。Phase 10 同日完成。详见 vibeplan.md。
-> 权威计划文件：`vibeplan.md`（Phase 0-4 已完成并记录；Phase 5/6 待做）
-> 需求原始文件：`Salacia_Terminal_优化开发提示词.md`（纪律与范围红线）+ `ROV_A35_M33_Control_Protocol_v1.0.md`（仅业务语义参考）
+> 生成时间：2026-08-30（Phase 0-6）；更新：2026-09-02（**第二轮优化 Phase 12-19 全部完成**）
+> 用途：完整上下文交接。剩余：A35 实机对接（接口文档 §10 待确认项）、SOC 标定、版本元数据、push/PR（用户决定）。
+> **最新状态（2026-09-02，第二轮优化）**：依据 `docs/VibePrompt.md` 完成 8 个阶段——
+> ①协议层扩展（新 funcId 0x0013-17/0x0024-27/0x0051/StateEventV2 0x0104、执行器 ID 拓扑
+> 舵机 wire0-9/垂直 10-13/水平 14-15、Estop 空载荷删除 32B 舵机设计、
+> 优先级 Estop>Emergency>StopMove>普通 且紧急队列稳定排序）；
+> ②SafetyStateModel 重写（PendingSwitchState×7、Safe↔姿态稳定联动、非法组合
+> Safe=ON+Stab=OFF 锁推进器+高等级告警、舵机权限与全部模式解耦、布局判定纯逻辑）；
+> ③ControlViewModel 分组重构（垂直/水平分组、双基准 BaseValueVH、Stop/Move 请求、
+> 锁存清待发+重新使能不重放）；④UI（主页分组推进器+布局动态切换+使能/同步开关、
+> 指令页 7 模式开关同一模型+控制区网格重排 5×2/2×2/2×1 水平滑条+开关联动置灰）；
+> ⑤指令页小视频（VideoFrameHub 最新帧共享层，单管线单端口，双视图零拷贝）；
+> ⑥窗口尺寸修复（删除全部顶层 setGeometry，只改内部布局）+GUI 测试；
+> ⑦文档改版（接口文档 v2/README/本文件/DELIVERY_REPORT.md）；
+> ⑧Debug+Release 双构建与 11 套件 135 用例全绿（证据等级：**Windows 侧与
+> Mock A35 通过，A35 实机未对接**）。
+> 权威计划文件：`vibeplan.md`（一轮 Phase 0-11 + 二轮 Phase 12-19 全记录）
+> 需求原始文件：`docs/VibePrompt.md`（二轮）+ `Salacia_Terminal_优化开发提示词.md`（一轮）
+> + `ROV_A35_M33_Control_Protocol_v1.0.md`（仅业务语义参考）
 
 ---
 
@@ -32,12 +46,13 @@ set QTDIR=F:/Qt/6.11.1/msvc2022_64
 cmake --build out\build\debug      # 或 out\build\release
 ```
 
-### 测试命令（8 套件 95 用例，全部通过中）
+### 测试命令（11 套件 135 用例，全部通过中）
 ```
 cd out\build\debug
 .\salacia_tests_appconfig.exe / .salacia_tests_wire.exe / .salacia_tests_registry.exe /
 .\salacia_tests_sensor.exe / .salacia_tests_tcp.exe / .salacia_tests_alarm.exe /
-.\salacia_tests_safety.exe / .salacia_tests_controlvm.exe
+.\salacia_tests_safety.exe / .salacia_tests_controlvm.exe / .salacia_tests_phase6.exe /
+.\salacia_tests_videohub.exe / .salacia_tests_windowgui.exe（真实窗口 GUI）
 （exe 为 WIN32 子系统无控制台输出，用 -o 文件,txt 或 ctest）
 ```
 

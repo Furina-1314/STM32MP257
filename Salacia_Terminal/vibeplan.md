@@ -600,3 +600,18 @@ struct PendingSwitchState {
 | 窗口几何修复导致内容挤压 | 告警面板 maxHeight + 内容区最小尺寸约束；GUI 测试断言 |
 
 回滚：每 Phase 一个 commit 保持可编译，按 commit 粒度回退。
+
+## R.12 第二轮 Phase 完成记录（2026-09-02）
+
+- **Phase 12 计划文档 ✅（aabb892）**：docs/VibePrompt.md 入库；本文件增补 §R.1-R.11。
+- **Phase 13 协议层 ✅（52ab9fa）**：注册表扩至 42 函数；执行器 ID 拓扑常量+映射助手；StateEventV2/BaseValueVH 编解码（版本/未知位整帧拒绝）；Estop 空载荷（删除 32B 舵机零值设计）；优先级 Estop>Emergency>StopMove>普通 且紧急队列按优先级稳定排序插入；107/107 绿（新增 actuatorIdTopology/stateEventV2Decode/urgentOrderWithinQueue）。
+- **Phase 14 状态模型 ✅（c000183）**：SafetyStateModel 重写为 PendingSwitchState×7（含 ackCommitted 冲突检测）；SafeOn 双 Pending/失败双回退；switchToggleAllowed（Safe ON 禁关姿态稳定、Pending 禁重复点击）；非法组合 Safe=ON+Stab=OFF 告警+锁推进器+修正自动解锁；canServoIndividual 仅要求连接；canThrusterGroup 分组权限；布局判定 Individual/Sync/Base；MainWindow 消费 StateEventV2（legacy 回退）+回退/冲突告警接线；MockA35 sendStateEventV2；116/116 绿（safetystate 14→23）。
+- **Phase 15 ControlViewModel ✅（d4374e7）**：分组通道 API 与 wire 映射；双基准 BaseValueVH 独立设定与分组确认回填；Stop/Move 请求（总使能非 ON 禁分组 Move）；onAuthorityStateChanged 全量同步 + flushPending 二次校验（不重放双保险）；拓扑改用 WireConstants（AppConfig 三键弃用告警）；120/120 绿（controlvm 13→17）。
+- **Phase 16 UI ✅（91906c8 + 2467faf 补充）**：共享 SwitchButtonWidget（四态绑定、Unknown 半选、Safe 联动锁定、乐观 Pending+回退）；主页分组推进器+布局动态切换+使能/同步开关+舵机权限解锁；指令页 7 模式开关同一模型；补充：总使能非 ON 分组使能置灰、非法组合提示、指令页水平滑条。
+- **Phase 17 视频 ✅（fb2d035 + 6f3cb01 布局重排）**：VideoFrameHub 最新帧发布层（shared_ptr 快照零拷贝、覆盖不积压）；管线显示通道改 Hub（AI 环不动，单管线不变式）；指令页左上小视频（[ui] 尺寸键，关闭逆序 releaseVideoGl）；test_videohub 8 用例；用户反馈后指令页控制区重排（舵机 5×2/垂直 2×2/水平 2×1 网格、两行式器件格、使能底部单行、模块顶到右侧）；128/128 绿。
+- **Phase 18 窗口 ✅（4d46715）**：删除菜单折叠与告警展开全部顶层 setGeometry（只改内部布局）；面板限高迁 [alarms] panel_max_height；test_windowgui 7 用例（真实组件宿主窗口：普通/最大化/重复无漂移）；135/135 绿。
+- **Phase 19 文档与验收 ✅（本次提交）**：docs/WINDOWS_A35_INTERFACE.md 改版 v2；README/HANDOFF 更新；DELIVERY_REPORT.md；Debug+Release 双构建零新告警 + 11 套件 135 用例全绿 + 冒烟退出干净。
+
+### 二轮遗留（非本任务范围）
+- A35 实机对接：接口文档 §10 待确认项全部未动（新 funcId 数值、StateEventV2 时机、Safe 原子性、100Hz 字段等）。
+- 主页/指令页布局宽度配比可按观感微调（结构已参数化，不影响协议与状态机）。
