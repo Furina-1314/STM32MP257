@@ -21,8 +21,11 @@ class ControlAreaWidget;
 class ControlViewModel;
 class SafetyStateModel;
 class SwitchButtonWidget;
+class VideoFrameHub;
+class VideoGLWidget;
 
-// 指令页：模式开关（7 个事务开关，与主页共用同一 SafetyStateModel）+
+// 指令页：左上角小尺寸实时视频（与主页共享同一 VideoFrameHub/单管线）+
+// 模式开关（7 个事务开关，与主页共用同一 SafetyStateModel）+
 // 控制区（复用主页组件）+ 查询表单 + 受限原始入口
 class CommandPageWidget : public QWidget
 {
@@ -31,6 +34,7 @@ class CommandPageWidget : public QWidget
 public:
     explicit CommandPageWidget(ControlViewModel* viewModel,
                                SafetyStateModel* safety,
+                               VideoFrameHub* videoHub = nullptr,
                                QWidget* parent = nullptr);
 
     void onRequestSent(quint16 seq, quint16 funcId);
@@ -39,6 +43,7 @@ public:
     void onResponse(quint16 funcId, const QByteArray& payload);
     void setLinkAvailable(bool available);
     void refreshModeButtons(); // SafetyStateModel::stateChanged -> 此处
+    void releaseVideoGl();     // 关闭流程：提前释放小视频 GL 资源（幂等）
 
     struct RequestRow
     {
@@ -94,6 +99,7 @@ private:
     QPushButton* rawSendBtn_ = nullptr;
 
     ControlAreaWidget* controlArea_ = nullptr;
+    VideoGLWidget* commandVideo_ = nullptr; // 左上角小视频（共享 Hub，可空）
 
     QTableWidget* table_ = nullptr;
     QMap<quint16, RequestRow> pending_;

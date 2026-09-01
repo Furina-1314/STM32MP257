@@ -179,6 +179,7 @@ set(PROJECT_SOURCES
     src/core/DataManager.cpp
     src/utils/RingBuffer.h
     src/video/VideoFrame.h
+    src/video/VideoFrameHub.h
     src/video/GStreamerPipeline.h
     src/video/GStreamerPipeline.cpp
     src/widgets/VideoGLWidget.h

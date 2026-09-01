@@ -9,6 +9,7 @@
 #include <gst/gst.h>
 
 #include "VideoFrame.h"
+#include "VideoFrameHub.h"
 #include "utils/RingBuffer.h"
 
 namespace salacia {
@@ -56,8 +57,9 @@ public:
     void stopForExit();
     bool isRunning() const { return running_.load(std::memory_order_acquire); }
 
-    // 显示帧通道：生产者=GStreamer 流线程，消费者=Qt Quick 渲染线程
-    RingBuffer<VideoFrame, 4>& displayFrames() { return displayFrames_; }
+    // 显示帧通道（最新帧发布层）：生产者=GStreamer 流线程，消费者=主页与
+    // 指令页两个 VideoGLWidget（各自快照渲染，互不竞争 RingBuffer）
+    VideoFrameHub& displayHub() { return displayHub_; }
     // AI 帧通道：生产者=GStreamer 流线程，消费者=推理线程（Phase 4）
     RingBuffer<VideoFrame, 4>& aiFrames() { return aiFrames_; }
 
@@ -75,9 +77,13 @@ private:
 
     static GstFlowReturn onDisplaySample(GstAppSink* sink, gpointer self);
     static GstFlowReturn onAiSample(GstAppSink* sink, gpointer self);
+    // 从 appsink 拉取一帧并紧排列化（失败返回空；线程安全，任意流线程）
+    static std::shared_ptr<VideoFrame> pullSample(GstAppSink* sink);
     static void pullFrameToRing(GstAppSink* sink,
                                 RingBuffer<VideoFrame, 4>& ring,
                                 std::atomic<quint64>& dropped);
+    static void pullFrameToHub(GstAppSink* sink, VideoFrameHub& hub,
+                               std::atomic<quint64>& index);
     static GstBusSyncReply busSyncCallback(GstBus* bus, GstMessage* msg,
                                            gpointer self);
 
@@ -99,8 +105,9 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<qint64> lastFrameMs_{0};
     std::atomic<quint64> totalFrames_{0};
-    std::atomic<quint64> displayDropped_{0}; // 显示帧环溢出（状态栏"丢帧"数据源）
-    std::atomic<quint64> aiDropped_{0};      // AI 帧环溢出（仅日志观察，不进状态栏）
+    std::atomic<quint64> displayFrameIndex_{0}; // Hub 帧序号（单调递增，>0）
+    std::atomic<quint64> displayDropped_{0};    // 保留：Hub 模式显示通道不再溢出丢帧（恒 0）
+    std::atomic<quint64> aiDropped_{0};         // AI 帧环溢出（仅日志观察，不进状态栏）
 
     QTimer watchdog_; // 主线程：2s 无帧自愈 + 1Hz 统计上报
     bool restartScheduled_ = false;
@@ -110,7 +117,7 @@ private:
     qint64 startedAtMs_ = 0; // 本轮管线启动时刻（无包诊断用）
     bool noPacketHintLogged_ = false;
 
-    RingBuffer<VideoFrame, 4> displayFrames_;
+    VideoFrameHub displayHub_;             // 显示通道最新帧（双视图共享）
     RingBuffer<VideoFrame, 4> aiFrames_;
 };
 

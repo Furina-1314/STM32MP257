@@ -247,6 +247,10 @@ bool AppConfig::load(const QString& explicitPath)
     windowHeight_ = boundedInt(ini, "ui/window_height", windowHeight_, 480, 4320);
     videoRenderIntervalMs_ = boundedInt(ini, "ui/video_render_interval_ms",
                                         videoRenderIntervalMs_, 10, 200);
+    commandVideoWidth_ = boundedInt(ini, "ui/command_video_width",
+                                    commandVideoWidth_, 160, 800);
+    commandVideoHeight_ = boundedInt(ini, "ui/command_video_height",
+                                     commandVideoHeight_, 90, 600);
     detectLineWidth_ = static_cast<float>(boundedDouble(ini, "ui/detect_line_width",
                                                         detectLineWidth_, 0.5, 10.0));
     detectLabelFontPt_ = static_cast<float>(boundedDouble(ini, "ui/detect_label_font_pt",

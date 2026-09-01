@@ -85,3 +85,7 @@ salacia_add_test_target(salacia_tests_controlvm
     ../src/communication/FunctionRegistry.cpp
     ../src/core/AppConfig.cpp
     ../src/core/Logger.cpp)
+
+salacia_add_test_target(salacia_tests_videohub
+    test_videohub.cpp
+    ../src/video/VideoFrameHub.h)

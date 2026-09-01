@@ -105,7 +105,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     stack_ = new QStackedWidget(content);
     stack_->addWidget(createHomePage());          // 0 ÷˜“≥
-    commandPage_ = new CommandPageWidget(controlVm_.get(), safety_.get(), stack_);
+    commandPage_ = new CommandPageWidget(controlVm_.get(), safety_.get(),
+                                         &pipeline_->displayHub(), stack_);
     stack_->addWidget(commandPage_);               // 1 ÷∏¡Ó
     settingsPage_ = new SettingsPageWidget(
             const_cast<AppConfig&>(AppConfig::instance()), stack_); // 2 …Ë÷√
@@ -229,7 +230,7 @@ QWidget* MainWindow::createHomePage()
 
     auto* topSplit = new QSplitter(Qt::Horizontal, page);
     videoWidget_ = new VideoGLWidget(topSplit);
-    videoWidget_->setSource(&pipeline_->displayFrames());
+    videoWidget_->setSource(&pipeline_->displayHub());
     topSplit->addWidget(videoWidget_);
 
     auto* rightColumn = new QWidget(topSplit);
@@ -624,6 +625,7 @@ void MainWindow::requestEmergencyWithConfirm()
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     videoWidget_->releaseGl();
+    commandPage_->releaseVideoGl();
     pipeline_->stopForExit();
     pipeline_.release();
     telemetryReceiver_->stop();

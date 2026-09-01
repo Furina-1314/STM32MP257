@@ -154,6 +154,8 @@ public:
     int windowWidth() const { return windowWidth_; }
     int windowHeight() const { return windowHeight_; }
     int videoRenderIntervalMs() const { return videoRenderIntervalMs_; }
+    int commandVideoWidth() const { return commandVideoWidth_; }
+    int commandVideoHeight() const { return commandVideoHeight_; }
     float detectLineWidth() const { return detectLineWidth_; }
     float detectLabelFontPt() const { return detectLabelFontPt_; }
     QString estopButtonColor() const { return estopButtonColor_; }
@@ -322,6 +324,8 @@ private:
     int windowWidth_ = 1440;
     int windowHeight_ = 860;
     int videoRenderIntervalMs_ = 33;
+    int commandVideoWidth_ = 320;  // ÷∏¡Ó“≥–° ”∆µ≥ﬂ¥Á
+    int commandVideoHeight_ = 180;
     float detectLineWidth_ = 2.0F;
     float detectLabelFontPt_ = 9.5F;
     QString estopButtonColor_ = QStringLiteral("#8c2f2f");

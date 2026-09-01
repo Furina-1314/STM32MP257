@@ -14,9 +14,12 @@
 #include "communication/FunctionRegistry.h"
 #include "communication/WireConstants.h"
 #include "control/ControlViewModel.h"
+#include "core/AppConfig.h"
 #include "core/SafetyStateModel.h"
+#include "video/VideoFrameHub.h"
 #include "widgets/ControlAreaWidget.h"
 #include "widgets/SwitchButtonWidget.h"
+#include "widgets/VideoGLWidget.h"
 
 namespace salacia {
 
@@ -33,6 +36,7 @@ QString funcName(quint16 funcId)
 
 CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
                                      SafetyStateModel* safety,
+                                     VideoFrameHub* videoHub,
                                      QWidget* parent)
     : QWidget(parent)
     , vm_(viewModel)
@@ -48,6 +52,16 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
 
     auto* body = new QHBoxLayout();
     auto* formColumn = new QVBoxLayout();
+
+    // ---- 左上角小尺寸实时视频（共享主页 VideoFrameHub：单管线/单端口/零拷贝）----
+    if (videoHub != nullptr) {
+        const AppConfig& cfg = AppConfig::instance();
+        commandVideo_ = new VideoGLWidget(this);
+        commandVideo_->setFixedSize(
+                QSize(cfg.commandVideoWidth(), cfg.commandVideoHeight()));
+        commandVideo_->setSource(videoHub);
+        formColumn->addWidget(commandVideo_, 0, Qt::AlignLeft | Qt::AlignTop);
+    }
 
     // ---- 系统组 ----
     {
@@ -333,6 +347,13 @@ void CommandPageWidget::appendRowNoop(const QString& name)
 void CommandPageWidget::setLinkAvailable(bool available)
 {
     linkAvailable_ = available;
+}
+
+void CommandPageWidget::releaseVideoGl()
+{
+    if (commandVideo_ != nullptr) {
+        commandVideo_->releaseGl(); // 幂等；MainWindow closeEvent 逆序首步调用
+    }
 }
 
 void CommandPageWidget::onRequestSent(quint16 seq, quint16 funcId)
