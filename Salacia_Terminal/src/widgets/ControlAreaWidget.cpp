@@ -2,6 +2,7 @@
 
 #include <QEvent>
 #include <QGroupBox>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QIntValidator>
 #include <QLabel>
@@ -29,20 +30,32 @@ ControlAreaWidget::ControlAreaWidget(ControlViewModel* viewModel,
     , safety_(safety)
     , orientation_(sliderOrientation)
 {
-    auto* layout = new QHBoxLayout(this);
-    servoGroup_ = buildServoGroup();
-    layout->addWidget(servoGroup_, 4);
-    layout->addWidget(buildThrusterGroup(true), 3);
-    layout->addWidget(buildThrusterGroup(false), 2);
-
-    auto* rightColumn = new QVBoxLayout();
-    rightColumn->addWidget(buildEnableGroup());
-    if (withEmergencyArea) {
-        rightColumn->addWidget(buildEmergencyArea(), 1);
+    if (orientation_ == Qt::Horizontal) {
+        // 指令页（水平滑条）：舵机 5x2 / 垂直 2x2 / 水平 2x1 三个模块自上而下
+        // 占满整个控制区（顶到窗口最右侧），使能开关作为底部一行不另占列
+        auto* layout = new QVBoxLayout(this);
+        servoGroup_ = buildServoGroup();
+        layout->addWidget(servoGroup_, 2);
+        layout->addWidget(buildThrusterGroup(true), 2);
+        layout->addWidget(buildThrusterGroup(false), 1);
+        layout->addWidget(buildEnableGroup());
     } else {
-        rightColumn->addStretch(1);
+        // 主页（竖直滑条）：舵机 | 垂直 | 水平 | 右列（使能+紧急固定区）
+        auto* layout = new QHBoxLayout(this);
+        servoGroup_ = buildServoGroup();
+        layout->addWidget(servoGroup_, 4);
+        layout->addWidget(buildThrusterGroup(true), 3);
+        layout->addWidget(buildThrusterGroup(false), 2);
+
+        auto* rightColumn = new QVBoxLayout();
+        rightColumn->addWidget(buildEnableGroup());
+        if (withEmergencyArea) {
+            rightColumn->addWidget(buildEmergencyArea(), 1);
+        } else {
+            rightColumn->addStretch(1);
+        }
+        layout->addLayout(rightColumn, 2);
     }
-    layout->addLayout(rightColumn, 2);
 
     connect(vm_, &ControlViewModel::channelUpdated, this,
             [this](int kind, int id) {
@@ -75,11 +88,17 @@ QGroupBox* ControlAreaWidget::buildServoGroup()
     const AppConfig& cfg = AppConfig::instance();
     auto* group = new QGroupBox(QString::fromLocal8Bit("舵机（%1 路，°）")
                                     .arg(wire::kServoCount), this);
-    // 主页竖直滑条（列布局）；指令页水平滑条（行布局，防窗口过宽）
-    QBoxLayout* layout = (orientation_ == Qt::Horizontal)
-            ? static_cast<QBoxLayout*>(new QVBoxLayout(group))
-            : static_cast<QBoxLayout*>(new QHBoxLayout(group));
-    layout->setSpacing(6);
+    // 主页竖直滑条（列布局）；指令页水平滑条（5 列 x 2 行网格，两行式器件格）
+    QGridLayout* grid = nullptr;
+    QBoxLayout* layout = nullptr;
+    const int gridCols = wire::kServoCount / 2; // 10 -> 5 列
+    if (orientation_ == Qt::Horizontal) {
+        grid = new QGridLayout(group);
+        grid->setSpacing(6);
+    } else {
+        layout = new QHBoxLayout(group);
+        layout->setSpacing(8);
+    }
     servoRows_.resize(wire::kServoCount);
     const int mid = (cfg.servoMinDeg() + cfg.servoMaxDeg()) / 2;
 
@@ -105,15 +124,19 @@ QGroupBox* ControlAreaWidget::buildServoGroup()
                                    group);
 
         if (orientation_ == Qt::Horizontal) {
-            caption->setFixedWidth(110);
-            target->setFixedWidth(64);
-            auto* row = new QHBoxLayout();
-            row->setSpacing(6);
-            row->addWidget(caption);
-            row->addWidget(target);
-            row->addWidget(slider, 1);
-            row->addWidget(input);
-            layout->addLayout(row);
+            // 两行式器件格：[标签 三态 输入框] / [水平滑条占满格宽]
+            caption->setFixedWidth(104);
+            target->setFixedWidth(60);
+            auto* cell = new QVBoxLayout();
+            cell->setSpacing(2);
+            auto* info = new QHBoxLayout();
+            info->setSpacing(4);
+            info->addWidget(caption);
+            info->addWidget(target, 1);
+            info->addWidget(input);
+            cell->addLayout(info);
+            cell->addWidget(slider, 1);
+            grid->addLayout(cell, i / gridCols, i % gridCols);
         } else {
             caption->setAlignment(Qt::AlignCenter);
             auto* column = new QVBoxLayout();
@@ -177,12 +200,18 @@ QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
     auto* stackHost = new QWidget(g.group);
     g.stack = new QStackedLayout(stackHost);
 
-    // 独立滑条页（主页竖直列布局；指令页水平行布局）
+    // 独立滑条页（主页竖直列布局；指令页 2 列网格、两行式器件格）
     auto* indPage = new QWidget(stackHost);
-    QBoxLayout* indLay = (orientation_ == Qt::Horizontal)
-            ? static_cast<QBoxLayout*>(new QVBoxLayout(indPage))
-            : static_cast<QBoxLayout*>(new QHBoxLayout(indPage));
-    indLay->setSpacing(6);
+    QGridLayout* indGrid = nullptr;
+    QBoxLayout* indLay = nullptr;
+    const int gridCols = qMin(count, 2); // 垂直 2x2 / 水平 2x1
+    if (orientation_ == Qt::Horizontal) {
+        indGrid = new QGridLayout(indPage);
+        indGrid->setSpacing(6);
+    } else {
+        indLay = new QHBoxLayout(indPage);
+        indLay->setSpacing(8);
+    }
     g.rows.resize(count);
     for (int i = 0; i < count; ++i) {
         const int uiNumber = i + 1;
@@ -208,15 +237,19 @@ QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
                         .arg(uiNumber).arg(wireId), indPage);
 
         if (orientation_ == Qt::Horizontal) {
-            caption->setFixedWidth(110);
-            target->setFixedWidth(64);
-            auto* row = new QHBoxLayout();
-            row->setSpacing(6);
-            row->addWidget(caption);
-            row->addWidget(target);
-            row->addWidget(slider, 1);
-            row->addWidget(input);
-            indLay->addLayout(row);
+            // 两行式器件格：[标签 三态 输入框] / [水平滑条占满格宽]
+            caption->setFixedWidth(104);
+            target->setFixedWidth(60);
+            auto* cell = new QVBoxLayout();
+            cell->setSpacing(2);
+            auto* info = new QHBoxLayout();
+            info->setSpacing(4);
+            info->addWidget(caption);
+            info->addWidget(target, 1);
+            info->addWidget(input);
+            cell->addLayout(info);
+            cell->addWidget(slider, 1);
+            indGrid->addLayout(cell, i / gridCols, i % gridCols);
         } else {
             caption->setAlignment(Qt::AlignCenter);
             auto* column = new QVBoxLayout();
@@ -271,11 +304,18 @@ QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
     g.syncSlider->setTickPosition(QSlider::TicksBelow);
     auto* syncCaption = new QLabel(QString::fromLocal8Bit("同步"), syncPage);
     if (orientation_ == Qt::Horizontal) {
-        syncCaption->setFixedWidth(110);
-        g.syncTarget->setFixedWidth(64);
-        syncLay->addWidget(syncCaption);
-        syncLay->addWidget(g.syncTarget);
-        syncLay->addWidget(g.syncSlider, 1);
+        // 两行式：[同步 三态] / [水平滑条占满行宽]
+        syncCaption->setFixedWidth(104);
+        g.syncTarget->setFixedWidth(60);
+        auto* cell = new QVBoxLayout();
+        cell->setSpacing(2);
+        auto* info = new QHBoxLayout();
+        info->setSpacing(4);
+        info->addWidget(syncCaption);
+        info->addWidget(g.syncTarget, 1);
+        cell->addLayout(info);
+        cell->addWidget(g.syncSlider, 1);
+        syncLay->addLayout(cell, 1);
     } else {
         syncCaption->setAlignment(Qt::AlignCenter);
         auto* column = new QVBoxLayout();
@@ -314,11 +354,23 @@ QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
     g.baseTarget->setFixedWidth(cfg.controlValueLabelWidth());
     auto* baseCaption = new QLabel(QString::fromLocal8Bit("基准"), basePage);
     if (orientation_ == Qt::Horizontal) {
-        baseCaption->setFixedWidth(110);
+        // 两行式：[基准 三态] / [水平滑条占满行宽]
+        baseCaption->setFixedWidth(104);
+        g.baseTarget->setFixedWidth(60);
+        auto* cell = new QVBoxLayout();
+        cell->setSpacing(2);
+        auto* info = new QHBoxLayout();
+        info->setSpacing(4);
+        info->addWidget(baseCaption);
+        info->addWidget(g.baseTarget, 1);
+        cell->addLayout(info);
+        cell->addWidget(g.baseSlider, 1);
+        baseLay->addLayout(cell, 1);
+    } else {
+        baseLay->addWidget(baseCaption);
+        baseLay->addWidget(g.baseSlider, 1);
+        baseLay->addWidget(g.baseTarget);
     }
-    baseLay->addWidget(baseCaption);
-    baseLay->addWidget(g.baseSlider, 1);
-    baseLay->addWidget(g.baseTarget);
     g.stack->addWidget(basePage);
     connect(g.baseSlider, &QSlider::valueChanged, this, [this, vertical](int v) {
         if (vertical) {
@@ -344,12 +396,16 @@ QGroupBox* ControlAreaWidget::buildThrusterGroup(bool vertical)
     return g.group;
 }
 
-// ---------------------------------------------------------------- 使能列
+// ---------------------------------------------------------------- 使能组
 
 QGroupBox* ControlAreaWidget::buildEnableGroup()
 {
     auto* group = new QGroupBox(QString::fromLocal8Bit("推进器使能"), this);
-    auto* lay = new QVBoxLayout(group);
+    // 主页：右列纵排；指令页：底部单行横排（不另占一列）
+    QBoxLayout* lay = (orientation_ == Qt::Horizontal)
+            ? static_cast<QBoxLayout*>(new QHBoxLayout(group))
+            : static_cast<QBoxLayout*>(new QVBoxLayout(group));
+    lay->setSpacing(12);
     enableAllSw_ = new SwitchButtonWidget(
             QString::fromLocal8Bit("推进器总使能"), group);
     enableVerticalSw_ = new SwitchButtonWidget(
@@ -374,8 +430,12 @@ QGroupBox* ControlAreaWidget::buildEnableGroup()
     layoutHintLabel_ = new QLabel(group);
     layoutHintLabel_->setWordWrap(true);
     layoutHintLabel_->setStyleSheet(QStringLiteral("color:#888888; font-size:11px;"));
-    lay->addWidget(layoutHintLabel_);
-    lay->addStretch(1);
+    if (orientation_ == Qt::Horizontal) {
+        lay->addWidget(layoutHintLabel_, 1); // 横排：提示占满剩余宽度
+    } else {
+        lay->addWidget(layoutHintLabel_);
+        lay->addStretch(1);
+    }
     return group;
 }
 
