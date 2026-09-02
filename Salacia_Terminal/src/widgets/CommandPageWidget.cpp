@@ -45,8 +45,8 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     auto* rootLayout = new QVBoxLayout(this);
 
     auto* notice = new QLabel(QString::fromLocal8Bit(
-            "TCP wire 为草案 v1（待 A35 确认）；全部命令仅限已注册函数，"
-            "状态以板端 ACK 为准。"), this);
+            "TCP wire 协议 v2 最终版（详见 docs/WINDOWS_A35_INTERFACE.md）；"
+            "全部命令仅限已注册函数，状态以板端 ACK 为准。"), this);
     notice->setWordWrap(true);
     rootLayout->addWidget(notice);
 
