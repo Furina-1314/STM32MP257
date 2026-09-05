@@ -6,7 +6,7 @@
 #include <memory>
 
 #include "video/VideoFrame.h"
-#include "utils/RingBuffer.h"
+#include "video/VideoFrameHub.h"
 
 class QOpenGLShaderProgram;
 class QOpenGLBuffer;
@@ -17,9 +17,10 @@ namespace salacia {
 
 // 视频显示组件（QOpenGLWidget + OpenGL 渲染，红线：解码/渲染由 GPU 承担）
 //
-// 数据通路：GStreamer 解码线程(生产者) -> 无锁 RingBuffer -> 本组件(GUI 线程)
-// 拉取节奏：33ms 定时器驱动（720p@30fps 场景满帧刷新；1080p@12fps 同步覆盖），
-// 仅在有新帧时才请求重绘，空转零开销。
+// 数据通路：GStreamer 解码线程(生产者) -> VideoFrameHub 最新帧发布层 ->
+// 本组件(GUI 线程)快照。多个实例（主页/指令页小画面）共享同一 Hub，
+// 互不竞争、零拷贝（shared_ptr 快照）。
+// 拉取节奏：33ms 定时器驱动，仅在有新帧（帧序号变化）时才请求重绘。
 //
 // AI 检测叠加：paintGL 内经 DataManager 读写锁读取最新检测集合，
 // 在视频视口上以 NDC 线框绘制检测框（归一化坐标与画面同源，无需换算）。
@@ -34,9 +35,9 @@ public:
     explicit VideoGLWidget(QWidget* parent = nullptr);
     ~VideoGLWidget() override;
 
-    // 绑定显示帧通道（不拥有；生命周期由 GStreamerPipeline 保证：
+    // 绑定最新帧发布层（不拥有；生命周期由 GStreamerPipeline 保证：
     // MainWindow 关闭时先停管线再析构）
-    void setSource(RingBuffer<VideoFrame, 4>* ring);
+    void setSource(VideoFrameHub* hub);
 
     quint64 renderedFrames() const { return renderedFrames_; }
 
@@ -50,10 +51,10 @@ protected:
     void paintGL() override;
 
 private:
-    void drainLatest();            // 排空环形缓冲，仅保留最新帧（旧帧丢弃保低延迟）
+    void drainLatest();            // 快照最新帧（序号未变则保持上一画面）
     void drawDetections();         // 检测框叠加（NDC 线框，含类别配色）
 
-    RingBuffer<VideoFrame, 4>* source_ = nullptr; // 不拥有
+    VideoFrameHub* source_ = nullptr; // 不拥有
 
     std::unique_ptr<QOpenGLShaderProgram> program_;     // 视频纹理着色
     std::unique_ptr<QOpenGLShaderProgram> lineProgram_; // 检测框纯色着色
@@ -67,7 +68,8 @@ private:
     int textureWidth_ = 0;
     int textureHeight_ = 0;
 
-    VideoFrame frame_;      // 最新帧缓存（GUI 线程私有）
+    std::shared_ptr<const VideoFrame> frame_; // 最新帧快照（GUI 线程私有，共享只读）
+    quint64 lastFrameIndex_ = 0;              // 已渲染的帧序号
     bool hasNewFrame_ = false;
     QTimer* repaintTimer_ = nullptr;
     quint64 renderedFrames_ = 0;

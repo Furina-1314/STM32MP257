@@ -105,18 +105,25 @@ void TcpClient::sendFrame(quint16 funcId, const QByteArray& payload)
     }
     {
         const std::lock_guard<std::mutex> lock(queueMutex_);
-        wire::WireFrame frame;
-        frame.funcId = funcId;
-        frame.flags = entry->needsAck ? wire::kFlagNeedAck : 0U;
-        frame.payload = payload;
-        if (entry->priority < wire::kPriorityNormal) {
-            urgentQueue_.push_back(std::move(frame)); // 紧急通道不设溢出丢弃
+        QueuedFrame item;
+        item.frame.funcId = funcId;
+        item.frame.flags = entry->needsAck ? wire::kFlagNeedAck : 0U;
+        item.frame.payload = payload;
+        item.priority = entry->priority;
+        if (item.priority < wire::kPriorityNormal) {
+            // 紧急通道：按优先级稳定排序插入（保证 Estop>Emergency>Stop/Move 次序），
+            // 不设溢出丢弃
+            const auto pos = std::find_if(urgentQueue_.begin(), urgentQueue_.end(),
+                                          [&item](const QueuedFrame& q) {
+                                              return q.priority > item.priority;
+                                          });
+            urgentQueue_.insert(pos, std::move(item));
         } else {
             if (static_cast<int>(normalQueue_.size()) >= settings_.sendQueueCapacity) {
                 normalQueue_.erase(normalQueue_.begin()); // 溢出丢最旧（保新鲜）
                 emit clientError(QString::fromLocal8Bit("TCP：普通发送队列溢出，丢弃最旧指令"));
             }
-            normalQueue_.push_back(std::move(frame));
+            normalQueue_.push_back(std::move(item));
         }
     }
 }
@@ -214,22 +221,23 @@ void TcpClient::onFlushTick()
         || (socket_->state() != QAbstractSocket::ConnectedState)) {
         return;
     }
-    // 紧急队列优先整体出队，其后普通队列（estop/emergency 永不排队等待）
+    // 紧急队列（已按优先级稳定排序）优先整体出队，其后普通队列
+    //（插队次序红线：Estop > Emergency > Stop/Move > 普通控制）
     for (;;) {
-        wire::WireFrame frame;
+        QueuedFrame item;
         {
             const std::lock_guard<std::mutex> lock(queueMutex_);
             if (!urgentQueue_.empty()) {
-                frame = std::move(urgentQueue_.front());
+                item = std::move(urgentQueue_.front());
                 urgentQueue_.erase(urgentQueue_.begin());
             } else if (!normalQueue_.empty()) {
-                frame = std::move(normalQueue_.front());
+                item = std::move(normalQueue_.front());
                 normalQueue_.erase(normalQueue_.begin());
             } else {
                 return;
             }
         }
-        writeFrameNow(frame.funcId, frame.flags, frame.payload);
+        writeFrameNow(item.frame.funcId, item.frame.flags, item.frame.payload);
     }
 }
 
@@ -454,6 +462,7 @@ void TcpClient::handleFrame(const wire::WireFrame& frame)
     case wire::Func::Heartbeat:
         return; // 心跳响应：链路活性由发送侧超时判定
     case wire::Func::StateEvent:
+    case wire::Func::StateEventV2:
     case wire::Func::AlarmEvent:
         emit eventReceived(frame.funcId, frame.payload);
         return;

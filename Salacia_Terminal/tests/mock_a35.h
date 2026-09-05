@@ -47,7 +47,8 @@ public slots:
     void sendRaw(const QByteArray&);
     void sendLateAck(quint16 seq);
     void dropClient();
-    void sendStateEvent(quint8 mask);
+    void sendStateEvent(quint8 mask);      // legacy 0x0102
+    void sendStateEventV2(quint16 mask);   // 0x0104£¨Ö÷Á´Â·£©
     void setAckErrorCodeFor(quint16 funcId, quint16 errCode);
     void startStream(int hz);
     void stopStream();

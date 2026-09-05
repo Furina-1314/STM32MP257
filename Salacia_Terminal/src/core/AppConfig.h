@@ -135,6 +135,7 @@ public:
     int alarmMaxItems() const { return alarmMaxItems_; }
     int alarmMergeWindowMs() const { return alarmMergeWindowMs_; }
     bool alarmLogEnabled() const { return alarmLogEnabled_; }
+    int alarmPanelMaxHeight() const { return alarmPanelMaxHeight_; }
 
     // ---- [ui] 主题/刷新/精度/样式 ----
     QString uiTheme() const { return uiTheme_; }             // light / dark
@@ -154,6 +155,8 @@ public:
     int windowWidth() const { return windowWidth_; }
     int windowHeight() const { return windowHeight_; }
     int videoRenderIntervalMs() const { return videoRenderIntervalMs_; }
+    int commandVideoWidth() const { return commandVideoWidth_; }
+    int commandVideoHeight() const { return commandVideoHeight_; }
     float detectLineWidth() const { return detectLineWidth_; }
     float detectLabelFontPt() const { return detectLabelFontPt_; }
     QString estopButtonColor() const { return estopButtonColor_; }
@@ -303,6 +306,7 @@ private:
     std::atomic<int> alarmMaxItems_{200};            // 实时
     std::atomic<int> alarmMergeWindowMs_{5000};      // 实时
     bool alarmLogEnabled_ = true;
+    int alarmPanelMaxHeight_ = 260; // 展开面板限高（窗口尺寸不变红线配套）
 
     // [ui]
     QString uiTheme_ = QStringLiteral("light");
@@ -322,6 +326,8 @@ private:
     int windowWidth_ = 1440;
     int windowHeight_ = 860;
     int videoRenderIntervalMs_ = 33;
+    int commandVideoWidth_ = 320;  // 指令页小视频尺寸
+    int commandVideoHeight_ = 180;
     float detectLineWidth_ = 2.0F;
     float detectLabelFontPt_ = 9.5F;
     QString estopButtonColor_ = QStringLiteral("#8c2f2f");

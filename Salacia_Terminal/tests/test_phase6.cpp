@@ -162,14 +162,15 @@ void TestPhase6::authorityStateEventPipeline()
     QVERIFY(waitForSpy(stateSpy, 3000));
 
     QSignalSpy eventSpy(&client, &TcpClient::eventReceived);
-    QMetaObject::invokeMethod(&mock, "sendStateEvent", Qt::QueuedConnection,
-                              Q_ARG(quint8, kStateSafe | kStateEstop));
+    QMetaObject::invokeMethod(&mock, "sendStateEventV2", Qt::QueuedConnection,
+                              Q_ARG(quint16, quint16(kStateV2Safe | kStateV2Estop
+                                                     | kStateV2GlobalStopped)));
     QVERIFY(waitForSpy(eventSpy, 2000));
     QCOMPARE(eventSpy.first().at(0).toUInt(),
-             static_cast<uint>(static_cast<quint16>(Func::StateEvent)));
-    quint8 mask = 0U;
-    QVERIFY(decodeStateEvent(eventSpy.first().at(1).toByteArray(), mask));
-    QCOMPARE(mask, quint8(kStateSafe | kStateEstop));
+             static_cast<uint>(static_cast<quint16>(Func::StateEventV2)));
+    quint16 mask = 0U;
+    QVERIFY(decodeStateEventV2(eventSpy.first().at(1).toByteArray(), mask));
+    QCOMPARE(mask, quint16(kStateV2Safe | kStateV2Estop | kStateV2GlobalStopped));
     client.stop();
 }
 
@@ -214,32 +215,38 @@ void TestPhase6::permissionMatrixAllStates()
                      [&safety](bool on) { safety.setConnected(on); });
     QObject::connect(&client, &TcpClient::eventReceived, &safety,
                      [&safety](quint16 funcId, const QByteArray& payload) {
-        if (funcId == static_cast<quint16>(Func::StateEvent)) {
-            quint8 mask = 0U;
-            if (decodeStateEvent(payload, mask)) {
-                safety.applyAuthoritative(mask);
+        if (funcId == static_cast<quint16>(Func::StateEventV2)) {
+            quint16 mask = 0U;
+            if (decodeStateEventV2(payload, mask)) {
+                safety.applyAuthoritativeV2(mask);
             }
         }
     });
 
     const struct Row
     {
-        quint8 mask;
+        quint16 mask;
         bool servo;
         bool thruster;
         bool base;
     } rows[] = {
+        // 普通手动：全使能 ON、稳定 OFF
         {0U, true, true, false},
-        {kStateHorizontal, false, false, true},
-        {kStateSafe | kStateHorizontal, false, false, false},
-        {kStateEstop, false, false, false},
-        {kStateEmergency, false, false, false},
+        // 姿态稳定 ON：基准模式（舵机不受影响——解耦红线）
+        {kStateV2AttitudeStab, true, false, true},
+        // Safe ON + 姿态稳定 ON（合法）：Safe 不锁舵机/推进器提交
+        {quint16(kStateV2Safe | kStateV2AttitudeStab), true, false, true},
+        // 总使能 OFF（停止锁存）：推进器全禁、舵机不受影响
+        {kStateV2GlobalStopped, true, false, false},
+        // estop 激活（伴随全局停止锁存）
+        {quint16(kStateV2Estop | kStateV2GlobalStopped), true, false, false},
+        // 恢复普通手动
         {0U, true, true, false},
     };
     for (const Row& row : rows) {
         QSignalSpy safetySpy(&safety, &SafetyStateModel::stateChanged);
-        QMetaObject::invokeMethod(&mock, "sendStateEvent", Qt::QueuedConnection,
-                                  Q_ARG(quint8, row.mask));
+        QMetaObject::invokeMethod(&mock, "sendStateEventV2", Qt::QueuedConnection,
+                                  Q_ARG(quint16, row.mask));
         QVERIFY(waitForSpy(safetySpy, 2000));
         QTest::qWait(50);
         QCOMPARE(safety.canServoIndividual(), row.servo);
@@ -293,14 +300,14 @@ void TestPhase6::measureEstopJumpLatency()
     const int before = mock.received().size();
 
     PropellerSetCmd cmd;
-    cmd.id = 2U;
+    cmd.id = 12U; // wire 12 = 垂直3（UI）
     cmd.valuePct = 30;
     const QByteArray normal = encodePropellerSet(cmd);
     for (int i = 0; i < 40; ++i) {
         client.sendFrame(static_cast<quint16>(Func::PropellerSet), normal);
     }
     const qint64 estopSentAt = QDateTime::currentMSecsSinceEpoch();
-    client.sendFrame(static_cast<quint16>(Func::Estop), encodeEstop(10, 6));
+    client.sendFrame(static_cast<quint16>(Func::Estop), QByteArray()); // 空载荷
 
     int estopIdx = -1;
     for (int guard = 0; guard < 200 && estopIdx < 0; ++guard) {

@@ -1,0 +1,43 @@
+# rov_gateway.service - ROV A35 gateway (Windows<->A35<->M33).
+#
+# Startup order (U-00 / handoff SOP):
+#   1. the vendor st-m33firmware-load.service has attempted its default load
+#      at sysinit; our preflight installs the ROV firmware ONLY when the
+#      running image is not ROV_M33 (a gateway restart must not reboot M33
+#      and clear its stop latches);
+#   2. wait for the RPMsg endpoint;
+#   3. run the formal self-test to completion (it must exit before the
+#      gateway takes ownership of /dev/ttyRPMSG0);
+#   4. the gateway itself.
+#
+# Restart=on-failure: after a crash the gateway re-runs alignment from M33
+# telemetry and never calls move(), so thrusters stay latched stopped.
+
+[Unit]
+Description=ROV A35 gateway (Windows<->A35<->M33 control channel)
+After=st-m33firmware-load.service network.target rov-ina226.service rov-dht11.service
+Wants=network.target
+# Rate limiting lives in [Unit] (systemd >= 230); in [Service] it was silently
+# ignored (T-02's protection was therefore inactive - fixed 2026-09-04).
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStartPre=/home/root/gateway/deploy/rov_m33_preflight.sh
+ExecStartPre=/home/root/gateway/deploy/wait_rpmsg.sh
+# Self-test gate with one-shot M33 recovery (T-01 watchdog, approved
+# 2026-09-04): a wedged M33 is restarted and the stop latch re-set here.
+ExecStartPre=/home/root/gateway/deploy/rov_m33_gate.sh
+ExecStart=/home/root/gateway/build/rov_gateway --config /etc/rov_gateway.ini
+Restart=on-failure
+RestartSec=3
+# Generous start timeout: self-test + alignment retries can take a while.
+TimeoutStartSec=90
+# Hard stop path: SIGTERM triggers the in-process graceful shutdown
+# (best-effort global stop, latch preserved).
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

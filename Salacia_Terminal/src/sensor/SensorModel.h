@@ -38,6 +38,7 @@ struct SensorDisplay
     bool batteryCritical = false;
     float distMm = 0.0F;
     DypState dypState = DypState::NotReady;
+    bool attitudeValid = false; // 最近汇总流含 kValidMpu（板端 MPU 在更新）
     qint64 lastUpdateMs = 0;
     enum class Source
     {

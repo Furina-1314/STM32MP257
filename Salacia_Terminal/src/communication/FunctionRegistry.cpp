@@ -22,13 +22,25 @@ const std::vector<FunctionEntry>& buildTable()
          true, kPriorityNormal, "systemState", "显示状态未知"},
         {static_cast<quint16>(Func::Help), "help", Direction::Request, Category::System,
          true, kPriorityNormal, "helpText", "指令页该条目置灰"},
-        // ---- 安全（stop/emergency/estop 三语义严格分离）----
-        {static_cast<quint16>(Func::Stop), "stop", Direction::Request, Category::Safety,
-         true, kPriorityEmergency, "stopState", "无法停止：显示状态未知"},
+        // ---- 安全（Stop/Estop/Emergency 均仅六路推进器置零，不操作舵机；
+        //      三者执行结果相同，区别仅优先级/告警等级/日志事件类型）----
+        {static_cast<quint16>(Func::StopAll), "stop all", Direction::Request, Category::Safety,
+         true, kPriorityStopMove, "globalStopped", "无法停止：显示状态未知"},
         {static_cast<quint16>(Func::Emergency), "emergency", Direction::Request, Category::Safety,
-         true, kPriorityEmergency, "emergencyState", "无法上浮：显示无法下发"},
+         true, kPriorityEmergency, "emergencyState", "无法停机：显示无法下发"},
         {static_cast<quint16>(Func::Estop), "estop", Direction::Request, Category::Safety,
          true, kPriorityEstop, "estopState", "无 ACK 时不得声称停机成功"},
+        // ---- Stop/Move 三级推进器使能（ON=Move 允许运动 / OFF=Stop 停止锁存）----
+        {static_cast<quint16>(Func::MoveAll), "move all", Direction::Request, Category::Propeller,
+         true, kPriorityStopMove, "globalStopped", "总使能未知：保守置灰推进器"},
+        {static_cast<quint16>(Func::StopVertical), "stop vertical", Direction::Request, Category::Propeller,
+         true, kPriorityStopMove, "verticalStopped", "垂直组使能未知：保守置灰"},
+        {static_cast<quint16>(Func::MoveVertical), "move vertical", Direction::Request, Category::Propeller,
+         true, kPriorityStopMove, "verticalStopped", "垂直组使能未知：保守置灰"},
+        {static_cast<quint16>(Func::StopHorizontal), "stop horizontal", Direction::Request, Category::Propeller,
+         true, kPriorityStopMove, "horizontalStopped", "水平组使能未知：保守置灰"},
+        {static_cast<quint16>(Func::MoveHorizontal), "move horizontal", Direction::Request, Category::Propeller,
+         true, kPriorityStopMove, "horizontalStopped", "水平组使能未知：保守置灰"},
         // ---- 模式 ----
         {static_cast<quint16>(Func::SafeOn), "safe on", Direction::Request, Category::Mode,
          true, kPriorityNormal, "safeMode", "模式以 A35 状态为准，显示未知"},
@@ -38,6 +50,15 @@ const std::vector<FunctionEntry>& buildTable()
          true, kPriorityNormal, "horizontalMode", "模式以 A35 状态为准，显示未知"},
         {static_cast<quint16>(Func::HorizontalOff), "horizontal off", Direction::Request, Category::Mode,
          true, kPriorityNormal, "horizontalMode", "模式以 A35 状态为准，显示未知"},
+        // ---- Synchronization（垂直/水平两组独立，主页与指令页共用同一状态）----
+        {static_cast<quint16>(Func::VerticalSyncOn), "vertical synchronization on", Direction::Request, Category::Mode,
+         true, kPriorityNormal, "verticalSync", "模式以 A35 状态为准，显示未知"},
+        {static_cast<quint16>(Func::VerticalSyncOff), "vertical synchronization off", Direction::Request, Category::Mode,
+         true, kPriorityNormal, "verticalSync", "模式以 A35 状态为准，显示未知"},
+        {static_cast<quint16>(Func::HorizontalSyncOn), "horizontal synchronization on", Direction::Request, Category::Mode,
+         true, kPriorityNormal, "horizontalSync", "模式以 A35 状态为准，显示未知"},
+        {static_cast<quint16>(Func::HorizontalSyncOff), "horizontal synchronization off", Direction::Request, Category::Mode,
+         true, kPriorityNormal, "horizontalSync", "模式以 A35 状态为准，显示未知"},
         // ---- 舵机 ----
         {static_cast<quint16>(Func::ServoSet), "set servo", Direction::Request, Category::Servo,
          true, kPriorityNormal, "servoState", "超时显示状态未知并查询当前值"},
@@ -60,8 +81,10 @@ const std::vector<FunctionEntry>& buildTable()
          true, kPriorityNormal, "propellerConfirmed", "无法读取：保持未知"},
         {static_cast<quint16>(Func::PropellerGetReal), "get propeller real", Direction::Request, Category::Propeller,
          true, kPriorityNormal, "propellerConfirmed", "无法读取：保持未知"},
-        // ---- 统一基准（horizontal on 专用多设备单帧）----
+        // ---- 统一基准（姿态稳定 on 专用）----
         {static_cast<quint16>(Func::BaseValue), "base value", Direction::Request, Category::Propeller,
+         true, kPriorityNormal, "baseValueState", "[弃用] 旧 6 路同值基准，勿再使用"},
+        {static_cast<quint16>(Func::BaseValueVH), "base value vh", Direction::Request, Category::Propeller,
          true, kPriorityNormal, "baseValueState", "超时显示状态未知"},
         // ---- 传感器查询 ----
         {static_cast<quint16>(Func::SensorMpu), "sensor mpu", Direction::Request, Category::Sensor,
@@ -79,9 +102,11 @@ const std::vector<FunctionEntry>& buildTable()
         {static_cast<quint16>(Func::Ack), "ack", Direction::Response, Category::Link,
          false, kPriorityNormal, "requestResult", "超时路径处理"},
         {static_cast<quint16>(Func::StateEvent), "state event", Direction::Event, Category::Mode,
-         false, kPriorityNormal, "authorityState", "丢弃坏帧并告警"},
+         false, kPriorityNormal, "authorityState", "[legacy] 丢弃坏帧并告警"},
         {static_cast<quint16>(Func::AlarmEvent), "alarm event", Direction::Event, Category::System,
          false, kPriorityNormal, "alarmRaised", "丢弃坏帧并告警"},
+        {static_cast<quint16>(Func::StateEventV2), "state event v2", Direction::Event, Category::Mode,
+         false, kPriorityNormal, "authorityState", "丢弃坏帧并告警"},
     };
     return table;
 }
@@ -127,6 +152,9 @@ int FunctionRegistry::count()
 
 QByteArray encodeServoSet(const ServoSetCmd& cmd)
 {
+    if (!isValidServoId(cmd.id)) {
+        return QByteArray(); // ID 红线：舵机 wire 0..9
+    }
     if (cmd.angleDeg > 180U) {
         return QByteArray(); // 值域红线：0-180°
     }
@@ -138,6 +166,9 @@ QByteArray encodeServoSet(const ServoSetCmd& cmd)
 
 QByteArray encodeServoMid(quint8 id)
 {
+    if (!isValidServoId(id) && (id != kIdBroadcast)) {
+        return QByteArray(); // ID 红线：0..9 或广播
+    }
     QByteArray payload;
     payload.append(static_cast<char>(id));
     return payload;
@@ -145,6 +176,9 @@ QByteArray encodeServoMid(quint8 id)
 
 QByteArray encodePropellerSet(const PropellerSetCmd& cmd)
 {
+    if (!isValidThrusterId(cmd.id)) {
+        return QByteArray(); // ID 红线：推进器 wire 10..15
+    }
     if ((cmd.valuePct < -100) || (cmd.valuePct > 100)) {
         return QByteArray(); // 值域红线：-100..+100
     }
@@ -156,37 +190,25 @@ QByteArray encodePropellerSet(const PropellerSetCmd& cmd)
 
 QByteArray encodePropellerStop(quint8 id)
 {
+    if (!isValidThrusterId(id) && (id != kIdBroadcast)) {
+        return QByteArray(); // ID 红线：10..15 或广播
+    }
     QByteArray payload;
     payload.append(static_cast<char>(id));
     return payload;
 }
 
-QByteArray encodeEstop(int servoCount, int thrusterCount)
+// Stop/Estop/Emergency 均为空载荷（仅推进器置零语义），无编码函数；
+// 姿态稳定统一基准：2×i16（垂直基准、水平基准）
+QByteArray encodeBaseValueVH(qint16 verticalPct, qint16 horizontalPct)
 {
-    if ((servoCount <= 0) || (servoCount > 16) || (thrusterCount <= 0) || (thrusterCount > 16)) {
-        return QByteArray();
-    }
-    // 单帧携带全部零值：舵机 u16 角度 0 + 推进器 i16 基准 0（多设备单帧仅此与基准值两处）
-    QByteArray payload;
-    for (int i = 0; i < servoCount; ++i) {
-        putU16(payload, 0U);
-    }
-    for (int i = 0; i < thrusterCount; ++i) {
-        putI16(payload, 0);
-    }
-    return payload;
-}
-
-QByteArray encodeBaseValue(int thrusterCount, qint16 valuePct)
-{
-    if ((thrusterCount <= 0) || (thrusterCount > 16)
-        || (valuePct < -100) || (valuePct > 100)) {
-        return QByteArray();
+    if ((verticalPct < -100) || (verticalPct > 100)
+        || (horizontalPct < -100) || (horizontalPct > 100)) {
+        return QByteArray(); // 值域红线：-100..+100
     }
     QByteArray payload;
-    for (int i = 0; i < thrusterCount; ++i) {
-        putI16(payload, valuePct);
-    }
+    putI16(payload, verticalPct);
+    putI16(payload, horizontalPct);
     return payload;
 }
 
@@ -256,6 +278,25 @@ bool decodeStateEvent(const QByteArray& payload, quint8& stateMask)
     const quint8 mask = static_cast<quint8>(payload.at(0));
     if ((mask & ~(kStateSafe | kStateHorizontal | kStateEstop | kStateEmergency)) != 0U) {
         return false; // 未知位：载荷版本不符，整帧拒绝
+    }
+    stateMask = mask;
+    return true;
+}
+
+bool decodeStateEventV2(const QByteArray& payload, quint16& stateMask)
+{
+    // u8 version(=2) + u16 mask（小端）= 3 字节；未知位整帧拒绝
+    if (payload.size() != 3) {
+        return false;
+    }
+    const quint8 version = static_cast<quint8>(payload.at(0));
+    if (version != kStateEventV2Version) {
+        return false; // 版本不符：整帧拒绝（禁止静默按旧位义解读）
+    }
+    bool ok = false;
+    const quint16 mask = getU16(payload, 1, ok);
+    if (!ok || ((mask & ~kStateV2KnownMask) != 0U)) {
+        return false; // 未知位：整帧拒绝
     }
     stateMask = mask;
     return true;

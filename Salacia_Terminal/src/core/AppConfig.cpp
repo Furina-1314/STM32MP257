@@ -134,6 +134,16 @@ bool AppConfig::load(const QString& explicitPath)
     servoCount_ = boundedInt(ini, "control/servo_count", servoCount_, 1, 32);
     thrusterCount_ = boundedInt(ini, "control/thruster_count", thrusterCount_, 1, 32);
     controlIdBase_ = boundedInt(ini, "control/id_base", controlIdBase_, 0, 255);
+    // [弃用] 执行器拓扑以 WireConstants 为唯一权威（舵机 wire 0-9、垂直 10-13、
+    // 水平 14-15）；三键仅为旧 ini 兼容保留，存在即告警，不影响运行时行为
+    if (ini.contains(QStringLiteral("control/servo_count"))
+        || ini.contains(QStringLiteral("control/thruster_count"))
+        || ini.contains(QStringLiteral("control/id_base"))) {
+        Logger::warning(QString::fromLocal8Bit(
+                "control/servo_count、thruster_count、id_base 已弃用："
+                "执行器拓扑以协议常量为准（舵机 wire 0-9，垂直 CH10-13，"
+                "水平 CH14-15）"));
+    }
     servoMinDeg_ = boundedInt(ini, "control/servo_min_deg", servoMinDeg_, 0, 180);
     servoMaxDeg_ = boundedInt(ini, "control/servo_max_deg", servoMaxDeg_, 0, 180);
     servoStepDeg_ = boundedInt(ini, "control/servo_step_deg", servoStepDeg_, 1, 90);
@@ -213,6 +223,8 @@ bool AppConfig::load(const QString& explicitPath)
     alarmMergeWindowMs_.store(boundedInt(ini, "alarms/merge_window_ms",
                                          alarmMergeWindowMs_.load(), 0, 600000));
     alarmLogEnabled_ = ini.value(QStringLiteral("alarms/log_alarms"), alarmLogEnabled_).toBool();
+    alarmPanelMaxHeight_ = boundedInt(ini, "alarms/panel_max_height",
+                                      alarmPanelMaxHeight_, 100, 600);
 
     // ---- [ui] ----
     uiTheme_ = ini.value(QStringLiteral("ui/theme"), uiTheme_).toString().toLower();
@@ -237,6 +249,10 @@ bool AppConfig::load(const QString& explicitPath)
     windowHeight_ = boundedInt(ini, "ui/window_height", windowHeight_, 480, 4320);
     videoRenderIntervalMs_ = boundedInt(ini, "ui/video_render_interval_ms",
                                         videoRenderIntervalMs_, 10, 200);
+    commandVideoWidth_ = boundedInt(ini, "ui/command_video_width",
+                                    commandVideoWidth_, 160, 800);
+    commandVideoHeight_ = boundedInt(ini, "ui/command_video_height",
+                                     commandVideoHeight_, 90, 600);
     detectLineWidth_ = static_cast<float>(boundedDouble(ini, "ui/detect_line_width",
                                                         detectLineWidth_, 0.5, 10.0));
     detectLabelFontPt_ = static_cast<float>(boundedDouble(ini, "ui/detect_label_font_pt",

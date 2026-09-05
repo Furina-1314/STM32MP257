@@ -105,7 +105,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     stack_ = new QStackedWidget(content);
     stack_->addWidget(createHomePage());          // 0 主页
-    commandPage_ = new CommandPageWidget(controlVm_.get(), safety_.get(), stack_);
+    commandPage_ = new CommandPageWidget(controlVm_.get(), safety_.get(),
+                                         &pipeline_->displayHub(), stack_);
     stack_->addWidget(commandPage_);               // 1 指令
     settingsPage_ = new SettingsPageWidget(
             const_cast<AppConfig&>(AppConfig::instance()), stack_); // 2 设置
@@ -131,17 +132,13 @@ MainWindow::MainWindow(QWidget* parent)
     nav_->setSelectedPageIndex(0);
 
     connect(navToggleBtn_, &QPushButton::clicked, this, [this] {
-        // 保持窗口尺寸不变：记录当前几何，切换后恢复（含最大化/全屏状态不破坏）
-        const bool wasMax = isMaximized();
-        const QRect savedGeo = normalGeometry();
+        // 折叠/展开只改变窗口内部布局：禁止 resize/adjustSize/setFixedSize/
+        // showNormal/showMaximized/setGeometry 等顶层窗口调用（窗口尺寸与
+        // 最大化状态不变红线），Qt 布局在客户区内自适应
         const bool expanded = nav_->navigationExpanded();
         nav_->setNavigationExpanded(!expanded);
         navToggleBtn_->setText(expanded ? QString::fromLocal8Bit("展开菜单")
                                         : QString::fromLocal8Bit("收起菜单"));
-        if (!wasMax) {
-            setGeometry(savedGeo); // 非最大化：恢复原窗口矩形
-        }
-        // 最大化时 setGeometry 会破坏全屏状态——不调即可（Qt 布局在客户区内自适应）
     });
 
     // ---- 状态栏 ----
@@ -176,10 +173,28 @@ MainWindow::MainWindow(QWidget* parent)
         }
     }, Qt::QueuedConnection);
     connect(safety_.get(), &SafetyStateModel::stateChanged, this, [this] {
-        controlVm_->onHorizontalChanged(safety_->horizontalState() == ModeState::On);
+        controlVm_->onAuthorityStateChanged();
         controlArea_->refreshPermissions();
         commandPage_->refreshModeButtons();
     }, Qt::QueuedConnection);
+    // 开关事务回退：窗口级提示 + 告警（ExInfoBar 弹窗经 alarmsChanged 链统一触发）
+    connect(safety_.get(), &SafetyStateModel::modeRejected, this,
+            [this](quint16 funcId, quint16 errCode) {
+                const wire::FunctionEntry* entry =
+                        wire::FunctionRegistry::findByFuncId(funcId);
+                const QString name = (entry != nullptr)
+                        ? QString::fromLatin1(entry->name) : QStringLiteral("unknown");
+                const QString text = QString::fromLocal8Bit(
+                        "开关请求被拒（%1，错误码 %2），已回退原状态")
+                        .arg(name).arg(errCode);
+                Logger::warning(text);
+                alarmModel_->add(AlarmLevel::Warning, QStringLiteral("mode"), text);
+            }, Qt::QueuedConnection);
+    connect(safety_.get(), &SafetyStateModel::authorityConflict, this,
+            [this](const QString& detail) {
+                Logger::error(QString::fromLocal8Bit("权威状态冲突：%1").arg(detail));
+                alarmModel_->add(AlarmLevel::Error, QStringLiteral("authority"), detail);
+            }, Qt::QueuedConnection);
 
     connect(commandPage_, &CommandPageWidget::commandRequested, this,
             [this](quint16 funcId, const QByteArray& payload) {
@@ -211,7 +226,7 @@ QWidget* MainWindow::createHomePage()
 
     auto* topSplit = new QSplitter(Qt::Horizontal, page);
     videoWidget_ = new VideoGLWidget(topSplit);
-    videoWidget_->setSource(&pipeline_->displayFrames());
+    videoWidget_->setSource(&pipeline_->displayHub());
     topSplit->addWidget(videoWidget_);
 
     auto* rightColumn = new QWidget(topSplit);
@@ -251,7 +266,8 @@ QWidget* MainWindow::createHomePage()
     topSplit->setStretchFactor(1, 1);
     topSplit->setCollapsible(1, false);
 
-    controlArea_ = new ControlAreaWidget(controlVm_.get(), safety_.get(), true, page);
+    controlArea_ = new ControlAreaWidget(controlVm_.get(), safety_.get(), true,
+                                         Qt::Vertical, page);
 
     auto* mainSplit = new QSplitter(Qt::Vertical, page);
     mainSplit->addWidget(topSplit);
@@ -378,8 +394,10 @@ void MainWindow::startDataFaces()
                 const char* srcText = (d.source == SensorDisplay::Source::Tcp) ? "TCP"
                         : (d.source == SensorDisplay::Source::Udp) ? "UDP" : "--";
                 sensorFreshLabel_->setText(
-                        QString::fromLocal8Bit("%1｜更新 %2s 前")
+                        QString::fromLocal8Bit("%1｜姿态%2｜更新 %3s 前")
                                 .arg(QString::fromLatin1(srcText))
+                                .arg(QString::fromLocal8Bit(
+                                        d.attitudeValid ? "有效" : "无效"))
                                 .arg(d.lastUpdateMs > 0
                                              ? (now - d.lastUpdateMs) / 1000.0
                                              : 0.0,
@@ -470,10 +488,20 @@ void MainWindow::connectTcpFace()
                 DataManager::instance().setRovState(state);
             }, Qt::QueuedConnection);
 
-    // A35 主动事件：StateEvent -> 权威状态；AlarmEvent -> 告警中心
+    // A35 主动事件：StateEventV2 -> 权威状态（主链路）；legacy StateEvent 兼容回退；
+    // AlarmEvent -> 告警中心
     connect(tcpClient_.get(), &TcpClient::eventReceived, this,
             [this](quint16 funcId, const QByteArray& payload) {
-                if (funcId == static_cast<quint16>(wire::Func::StateEvent)) {
+                if (funcId == static_cast<quint16>(wire::Func::StateEventV2)) {
+                    quint16 mask = 0U;
+                    if (wire::decodeStateEventV2(payload, mask)) {
+                        safety_->applyAuthoritativeV2(mask);
+                    } else {
+                        alarmModel_->add(AlarmLevel::Warning, QStringLiteral("tcp"),
+                                         QString::fromLocal8Bit(
+                                                 "状态事件 v2 载荷非法（丢弃）"));
+                    }
+                } else if (funcId == static_cast<quint16>(wire::Func::StateEvent)) {
                     quint8 mask = 0U;
                     if (wire::decodeStateEvent(payload, mask)) {
                         safety_->applyAuthoritative(mask);
@@ -579,22 +607,23 @@ void MainWindow::requestEmergencyWithConfirm()
 {
     if (AppConfig::instance().emergencyConfirmEnabled()) {
         const auto answer = ExMessageBox::question(
-                this, QString::fromLocal8Bit("紧急上浮确认"),
+                this, QString::fromLocal8Bit("紧急停机确认"),
                 QString::fromLocal8Bit(
-                        "确认执行受控紧急上浮？\n（水平推进器归零，垂直受限上浮推力）"),
+                        "确认执行紧急停机？\n（六路推进器置零；不改变舵机位置）"),
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (answer != QMessageBox::Yes) {
             return;
         }
     }
     controlVm_->requestEmergency();
-    statusBar()->showMessage(QString::fromLocal8Bit("紧急上浮已下发"),
+    statusBar()->showMessage(QString::fromLocal8Bit("紧急停机已下发"),
                              AppConfig::instance().statusMessageShortMs());
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
 {
     videoWidget_->releaseGl();
+    commandPage_->releaseVideoGl();
     pipeline_->stopForExit();
     pipeline_.release();
     telemetryReceiver_->stop();

@@ -7,6 +7,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -368,15 +369,13 @@ void GStreamerPipeline::handleBusMessage(GstMessage* msg)
     gst_message_unref(msg);
 }
 
-void GStreamerPipeline::pullFrameToRing(GstAppSink* sink,
-                                        RingBuffer<VideoFrame, 4>& ring,
-                                        std::atomic<quint64>& dropped)
+std::shared_ptr<VideoFrame> GStreamerPipeline::pullSample(GstAppSink* sink)
 {
     GstSample* sample = gst_app_sink_pull_sample(sink);
     if (sample == nullptr) {
-        return;
+        return nullptr;
     }
-
+    std::shared_ptr<VideoFrame> frame;
     GstCaps* caps = gst_sample_get_caps(sample);
     GstVideoInfo info;
     if (caps != nullptr && gst_video_info_from_caps(&info, caps)) {
@@ -388,44 +387,66 @@ void GStreamerPipeline::pullFrameToRing(GstAppSink* sink,
             const int bpp = GST_VIDEO_INFO_COMP_PSTRIDE(&info, 0);
             const int stride = GST_VIDEO_INFO_PLANE_STRIDE(&info, 0);
 
-            VideoFrame frame;
-            frame.width = width;
-            frame.height = height;
-            frame.bytesPerPixel = bpp;
-            frame.timestampNs = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer));
-            frame.data.resize(static_cast<std::size_t>(width) * height * bpp);
+            frame = std::make_shared<VideoFrame>();
+            frame->width = width;
+            frame->height = height;
+            frame->bytesPerPixel = bpp;
+            frame->timestampNs = static_cast<std::int64_t>(GST_BUFFER_PTS(buffer));
+            frame->data.resize(static_cast<std::size_t>(width) * height * bpp);
 
             // 逐行去 stride，紧排列化（BGRA/RGB 单平面打包格式）
             const std::uint8_t* src = map.data;
-            std::uint8_t* dst = frame.data.data();
+            std::uint8_t* dst = frame->data.data();
             for (int y = 0; y < height; ++y) {
                 std::memcpy(dst + static_cast<std::size_t>(y) * width * bpp,
                             src + static_cast<std::size_t>(y) * stride,
                             static_cast<std::size_t>(width) * bpp);
             }
-
-            if (!ring.push(std::move(frame))) {
-                dropped.fetch_add(1, std::memory_order_acq_rel); // 环满丢弃（低延迟优先）
-            }
             gst_buffer_unmap(buffer, &map);
         }
     }
     gst_sample_unref(sample);
+    return frame;
 }
 
-GstFlowReturn GStreamerPipeline::onDisplaySample(GstAppSink* /*sink*/, gpointer self)
+void GStreamerPipeline::pullFrameToRing(GstAppSink* sink,
+                                        RingBuffer<VideoFrame, 4>& ring,
+                                        std::atomic<quint64>& dropped)
+{
+    std::shared_ptr<VideoFrame> frame = pullSample(sink);
+    if (frame == nullptr) {
+        return;
+    }
+    if (!ring.push(std::move(*frame))) {
+        dropped.fetch_add(1, std::memory_order_acq_rel); // 环满丢弃（低延迟优先）
+    }
+}
+
+void GStreamerPipeline::pullFrameToHub(GstAppSink* sink, VideoFrameHub& hub,
+                                       std::atomic<quint64>& index)
+{
+    std::shared_ptr<VideoFrame> frame = pullSample(sink);
+    if (frame == nullptr) {
+        return;
+    }
+    // 发布最新帧（覆盖旧帧不积压；序号单调递增且 > 0，供视图判断新帧）
+    const quint64 seq = index.fetch_add(1, std::memory_order_acq_rel) + 1U;
+    hub.publish(std::shared_ptr<const VideoFrame>(std::move(frame)), seq);
+}
+
+GstFlowReturn GStreamerPipeline::onDisplaySample(GstAppSink* sink, gpointer self)
 {
     auto* pipe = static_cast<GStreamerPipeline*>(self);
-    pullFrameToRing(pipe->displaySink_, pipe->displayFrames_, pipe->displayDropped_);
+    pipe->pullFrameToHub(sink, pipe->displayHub_, pipe->displayFrameIndex_);
     pipe->lastFrameMs_.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_release);
     pipe->totalFrames_.fetch_add(1, std::memory_order_acq_rel);
     return GST_FLOW_OK;
 }
 
-GstFlowReturn GStreamerPipeline::onAiSample(GstAppSink* /*sink*/, gpointer self)
+GstFlowReturn GStreamerPipeline::onAiSample(GstAppSink* sink, gpointer self)
 {
     auto* pipe = static_cast<GStreamerPipeline*>(self);
-    pullFrameToRing(pipe->aiSink_, pipe->aiFrames_, pipe->aiDropped_);
+    pipe->pullFrameToRing(sink, pipe->aiFrames_, pipe->aiDropped_);
     return GST_FLOW_OK;
 }
 

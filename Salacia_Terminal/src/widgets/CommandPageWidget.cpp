@@ -1,8 +1,6 @@
 #include "CommandPageWidget.h"
 
-#include <QCheckBox>
 #include <QComboBox>
-#include <QProgressBar>
 #include <QDateTime>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -16,8 +14,12 @@
 #include "communication/FunctionRegistry.h"
 #include "communication/WireConstants.h"
 #include "control/ControlViewModel.h"
+#include "core/AppConfig.h"
 #include "core/SafetyStateModel.h"
+#include "video/VideoFrameHub.h"
 #include "widgets/ControlAreaWidget.h"
+#include "widgets/SwitchButtonWidget.h"
+#include "widgets/VideoGLWidget.h"
 
 namespace salacia {
 
@@ -34,6 +36,7 @@ QString funcName(quint16 funcId)
 
 CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
                                      SafetyStateModel* safety,
+                                     VideoFrameHub* videoHub,
                                      QWidget* parent)
     : QWidget(parent)
     , vm_(viewModel)
@@ -42,13 +45,23 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     auto* rootLayout = new QVBoxLayout(this);
 
     auto* notice = new QLabel(QString::fromLocal8Bit(
-            "TCP wire 为草案 v1（待 A35 确认）；全部命令仅限已注册函数，"
-            "状态以板端 ACK 为准。"), this);
+            "TCP wire 协议 v2 最终版（详见 docs/WINDOWS_A35_INTERFACE.md）；"
+            "全部命令仅限已注册函数，状态以板端 ACK 为准。"), this);
     notice->setWordWrap(true);
     rootLayout->addWidget(notice);
 
     auto* body = new QHBoxLayout();
     auto* formColumn = new QVBoxLayout();
+
+    // ---- 左上角小尺寸实时视频（共享主页 VideoFrameHub：单管线/单端口/零拷贝）----
+    if (videoHub != nullptr) {
+        const AppConfig& cfg = AppConfig::instance();
+        commandVideo_ = new VideoGLWidget(this);
+        commandVideo_->setFixedSize(
+                QSize(cfg.commandVideoWidth(), cfg.commandVideoHeight()));
+        commandVideo_->setSource(videoHub);
+        formColumn->addWidget(commandVideo_, 0, Qt::AlignLeft | Qt::AlignTop);
+    }
 
     // ---- 系统组 ----
     {
@@ -90,9 +103,9 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     {
         auto* group = new QGroupBox(QString::fromLocal8Bit("安全"), this);
         auto* lay = new QHBoxLayout(group);
-        stopBtn_ = new QPushButton(QString::fromLocal8Bit("stop 正常停止"), group);
+        stopBtn_ = new QPushButton(QString::fromLocal8Bit("stop all 推进器停止"), group);
         estopBtn_ = new QPushButton(QString::fromLocal8Bit("estop 紧急停机"), group);
-        emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("emergency 紧急上浮"), group);
+        emergencyBtn_ = new QPushButton(QString::fromLocal8Bit("emergency 紧急停机（高优先级）"), group);
         estopBtn_->setStyleSheet(QStringLiteral(
                 "QPushButton { background:#8c2f2f; color:white; font-weight:bold; }"));
         emergencyBtn_->setStyleSheet(QStringLiteral(
@@ -103,8 +116,8 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         lay->addStretch(1);
         formColumn->addWidget(group);
         connect(stopBtn_, &QPushButton::clicked, this, [this] {
-            if (gateSend(QStringLiteral("stop"))) {
-                emit commandRequested(static_cast<quint16>(wire::Func::Stop), QByteArray());
+            if (gateSend(QStringLiteral("stop all"))) {
+                emit commandRequested(static_cast<quint16>(wire::Func::StopAll), QByteArray());
             }
         });
         connect(estopBtn_, &QPushButton::clicked, this, [this] {
@@ -119,57 +132,36 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         });
     }
 
-    // ---- 模式开关组（SwitchButton + ProgressRing，各占一行）----
+    // ---- 模式开关组（7 个事务开关，与主页共用同一 SafetyStateModel）----
     {
         auto* group = new QGroupBox(QString::fromLocal8Bit("模式"), this);
         auto* lay = new QVBoxLayout(group);
 
-        // safe 行
-        auto* safeRow = new QHBoxLayout();
-        auto* safeLabel = new QLabel(QString::fromLocal8Bit("safe 安全模式"), group);
-        safeLabel->setFixedWidth(180);
-        safeSwitch_ = new QCheckBox(group);
-        safeSwitch_->setProperty("isSwitchButton", true); // FluentUI SwitchButton
-        safeRing_ = new QProgressBar(group);
-        safeRing_->setRange(0, 0); // 不确定进度（请求中旋转环）
-        safeRing_->setTextVisible(false);
-        safeRing_->setFixedSize(22, 22);
-        safeRing_->setVisible(false);
-        safeStatusLabel_ = new QLabel(group);
-        safeStatusLabel_->setStyleSheet(
-                QStringLiteral("color:#888888; font-size:11px;"));
-        safeRow->addWidget(safeLabel);
-        safeRow->addWidget(safeSwitch_);
-        safeRow->addWidget(safeRing_);
-        safeRow->addWidget(safeStatusLabel_, 1);
-        lay->addLayout(safeRow);
-
-        // horizontal 行
-        auto* horizontalRow = new QHBoxLayout();
-        auto* horizontalLabel =
-                new QLabel(QString::fromLocal8Bit("horizontal 姿态控制"), group);
-        horizontalLabel->setFixedWidth(180);
-        horizontalSwitch_ = new QCheckBox(group);
-        horizontalSwitch_->setProperty("isSwitchButton", true);
-        horizontalRing_ = new QProgressBar(group);
-        horizontalRing_->setRange(0, 0);
-        horizontalRing_->setTextVisible(false);
-        horizontalRing_->setFixedSize(22, 22);
-        horizontalRing_->setVisible(false);
-        horizontalStatusLabel_ = new QLabel(group);
-        horizontalStatusLabel_->setStyleSheet(
-                QStringLiteral("color:#888888; font-size:11px;"));
-        horizontalRow->addWidget(horizontalLabel);
-        horizontalRow->addWidget(horizontalSwitch_);
-        horizontalRow->addWidget(horizontalRing_);
-        horizontalRow->addWidget(horizontalStatusLabel_, 1);
-        lay->addLayout(horizontalRow);
+        const struct
+        {
+            SwitchId id;
+            const char* title; // GBK 字面量
+        } rows[] = {
+            {SwitchId::Safe, "Safe 安全保护"},
+            {SwitchId::AttitudeStab, "姿态稳定（Horizontal）"},
+            {SwitchId::GlobalEnable, "推进器总使能"},
+            {SwitchId::VerticalEnable, "垂直推进使能"},
+            {SwitchId::HorizontalEnable, "水平推进使能"},
+            {SwitchId::VerticalSync, "垂直同步（Synchronization）"},
+            {SwitchId::HorizontalSync, "水平同步（Synchronization）"},
+        };
+        for (const auto& row : rows) {
+            auto* sw = new SwitchButtonWidget(QString::fromLocal8Bit(row.title), group);
+            lay->addWidget(sw);
+            modeSwitches_.append({row.id, sw});
+            connect(sw, &SwitchButtonWidget::toggleRequested, this,
+                    [this, row, sw](bool on) {
+                        sw->showPending(on); // 乐观显示，回退经刷新链修正
+                        onModeSwitchToggled(row.id, on);
+                    });
+        }
 
         formColumn->addWidget(group);
-        connect(safeSwitch_, &QCheckBox::clicked, this,
-                &CommandPageWidget::safeToggled);
-        connect(horizontalSwitch_, &QCheckBox::clicked, this,
-                &CommandPageWidget::horizontalToggled);
     }
 
     // ---- 查询组 ----
@@ -180,9 +172,10 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         auto col1 = new QWidget(group);
         auto l1 = new QVBoxLayout(col1);
         servoGetIdSpin_ = new QSpinBox(col1);
-        servoGetIdSpin_->setRange(0, 255);
+        servoGetIdSpin_->setRange(0, wire::kServoCount); // 0=全部；1..10=UI 编号
         servoGetIdSpin_->setValue(0);
-        auto b1 = new QPushButton(QString::fromLocal8Bit("get servo <0=all|id>"), col1);
+        auto b1 = new QPushButton(
+                QString::fromLocal8Bit("get servo <0=all|UI 1-10>"), col1);
         l1->addWidget(servoGetIdSpin_);
         l1->addWidget(b1);
         connect(b1, &QPushButton::clicked, this, &CommandPageWidget::sendServoGet);
@@ -193,9 +186,10 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
         propKindCombo_->addItem(QStringLiteral("base"));
         propKindCombo_->addItem(QStringLiteral("real"));
         propGetIdSpin_ = new QSpinBox(col2);
-        propGetIdSpin_->setRange(0, 255);
-        propGetIdSpin_->setValue(1);
-        auto b2 = new QPushButton(QString::fromLocal8Bit("get propeller <id> base/real"), col2);
+        propGetIdSpin_->setRange(wire::kVerticalIdFirst, wire::kHorizontalIdLast); // wire 10..15
+        propGetIdSpin_->setValue(wire::kVerticalIdFirst);
+        auto b2 = new QPushButton(
+                QString::fromLocal8Bit("get propeller <wire 10-15> base/real"), col2);
         l2->addWidget(propKindCombo_);
         l2->addWidget(propGetIdSpin_);
         l2->addWidget(b2);
@@ -257,9 +251,13 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
     formHost->setLayout(formColumn);
     body->addWidget(formHost, 3);
 
-    // ---- 控制区（复用主页组件）----
-    controlArea_ = new ControlAreaWidget(vm_, safety_, false, this);
+    // ---- 控制区（复用主页组件；水平滑条行布局防窗口过宽）----
+    controlArea_ = new ControlAreaWidget(vm_, safety_, false, Qt::Horizontal, this);
     body->addWidget(controlArea_, 4);
+
+    // 请求被拒（链路不可用等）：乐观显示回到权威状态
+    connect(vm_, &ControlViewModel::permissionBlocked, this,
+            &CommandPageWidget::refreshModeButtons, Qt::QueuedConnection);
 
     // ---- 结果表 ----
     table_ = new QTableWidget(0, 5, this);
@@ -280,58 +278,45 @@ CommandPageWidget::CommandPageWidget(ControlViewModel* viewModel,
 
 void CommandPageWidget::refreshModeButtons()
 {
-    // SwitchButton 四态绑定：
-    //  On      -> checked + ring 隐藏
-    //  Off     -> unchecked + ring 隐藏
-    //  Pending -> checked + ring 可见（请求中旋转）
-    //  Unknown -> unchecked + 置灰不可点
-    const auto bindSwitch = [](QCheckBox* sw, QProgressBar* ring, QLabel* status,
-                               ModeState state) {
-        const bool pending = (state == ModeState::Pending);
-        const bool unknown = (state == ModeState::Unknown);
-        sw->setChecked(pending || (state == ModeState::On));
-        ring->setVisible(pending);
-        sw->setEnabled(!unknown);
-        if (pending) {
-            status->setText(QString::fromLocal8Bit("请求中..."));
-        } else if (unknown) {
-            status->setText(QString::fromLocal8Bit("状态未知"));
-        } else {
-            status->setText(state == ModeState::On
-                                    ? QString::fromLocal8Bit("已开启")
-                                    : QString::fromLocal8Bit("已关闭"));
-        }
-    };
-    bindSwitch(safeSwitch_, safeRing_, safeStatusLabel_, safety_->safeState());
-    bindSwitch(horizontalSwitch_, horizontalRing_, horizontalStatusLabel_,
-               safety_->horizontalState());
+    // 7 个事务开关按 SafetyStateModel 权威四态绑定（含 Safe 联动锁定）
+    for (const ModeSwitch& ms : modeSwitches_) {
+        ms.widget->bind(safety_, ms.id);
+    }
     controlArea_->refreshPermissions();
 }
 
-void CommandPageWidget::safeToggled()
+void CommandPageWidget::onModeSwitchToggled(SwitchId id, bool on)
 {
-    if (!gateSend(QStringLiteral("safe"))) {
-        refreshModeButtons();
+    // 权限判定（Pending 禁重复点击 / Safe ON 禁关姿态稳定）在模型侧
+    if (!safety_->switchToggleAllowed(id, on)) {
+        refreshModeButtons(); // 回到权威显示
         return;
     }
-    const bool turnOn = (safety_->safeState() != ModeState::On);
-    emit commandRequested(turnOn ? static_cast<quint16>(wire::Func::SafeOn)
-                                 : static_cast<quint16>(wire::Func::SafeOff),
-                          QByteArray());
-    refreshModeButtons();
-}
-
-void CommandPageWidget::horizontalToggled()
-{
-    if (!gateSend(QStringLiteral("horizontal"))) {
-        refreshModeButtons();
-        return;
+    switch (id) {
+    case SwitchId::Safe:
+        vm_->requestSafeMode(on);
+        break;
+    case SwitchId::AttitudeStab:
+        vm_->requestAttitudeStab(on);
+        break;
+    case SwitchId::GlobalEnable:
+        on ? vm_->requestMoveAll() : vm_->requestStopAll();
+        break;
+    case SwitchId::VerticalEnable:
+        on ? vm_->requestMoveGroup(true) : vm_->requestStopGroup(true);
+        break;
+    case SwitchId::HorizontalEnable:
+        on ? vm_->requestMoveGroup(false) : vm_->requestStopGroup(false);
+        break;
+    case SwitchId::VerticalSync:
+        vm_->requestVerticalSync(on);
+        break;
+    case SwitchId::HorizontalSync:
+        vm_->requestHorizontalSync(on);
+        break;
+    default:
+        break;
     }
-    const bool turnOn = (safety_->horizontalState() != ModeState::On);
-    emit commandRequested(turnOn ? static_cast<quint16>(wire::Func::HorizontalOn)
-                                 : static_cast<quint16>(wire::Func::HorizontalOff),
-                          QByteArray());
-    refreshModeButtons();
 }
 
 bool CommandPageWidget::gateSend(const QString& name)
@@ -362,6 +347,13 @@ void CommandPageWidget::appendRowNoop(const QString& name)
 void CommandPageWidget::setLinkAvailable(bool available)
 {
     linkAvailable_ = available;
+}
+
+void CommandPageWidget::releaseVideoGl()
+{
+    if (commandVideo_ != nullptr) {
+        commandVideo_->releaseGl(); // 幂等；MainWindow closeEvent 逆序首步调用
+    }
 }
 
 void CommandPageWidget::onRequestSent(quint16 seq, quint16 funcId)
@@ -478,12 +470,15 @@ void CommandPageWidget::sendServoGet()
     if (!gateSend(QStringLiteral("get servo"))) {
         return;
     }
+    const int value = servoGetIdSpin_->value();
+    if (value == 0) {
+        // 0 = 全部：ServoGetAll 空载荷（列表查询无逐台 id）
+        emit commandRequested(static_cast<quint16>(wire::Func::ServoGetAll), QByteArray());
+        return;
+    }
     QByteArray payload;
-    payload.append(static_cast<char>(static_cast<quint8>(servoGetIdSpin_->value())));
-    const quint16 func = (servoGetIdSpin_->value() == 0)
-            ? static_cast<quint16>(wire::Func::ServoGetAll)
-            : static_cast<quint16>(wire::Func::ServoGet);
-    emit commandRequested(func, payload);
+    payload.append(static_cast<char>(wire::servoWireId(value))); // UI 1..10 -> wire 0..9
+    emit commandRequested(static_cast<quint16>(wire::Func::ServoGet), payload);
 }
 
 void CommandPageWidget::sendPropellerGet()

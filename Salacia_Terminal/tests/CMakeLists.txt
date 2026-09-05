@@ -85,3 +85,20 @@ salacia_add_test_target(salacia_tests_controlvm
     ../src/communication/FunctionRegistry.cpp
     ../src/core/AppConfig.cpp
     ../src/core/Logger.cpp)
+
+salacia_add_test_target(salacia_tests_videohub
+    test_videohub.cpp
+    ../src/video/VideoFrameHub.h)
+
+# GUI 测试（真实 QWidget 窗口：窗口尺寸/最大化状态不变红线）
+salacia_add_test_target(salacia_tests_windowgui
+    test_windowgui.cpp
+    ../src/widgets/AlarmBarWidget.cpp
+    ../src/core/AlarmModel.cpp
+    ../src/core/AppConfig.cpp
+    ../src/core/Logger.cpp)
+target_include_directories(salacia_tests_windowgui PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/ui/exwidgets")
+target_link_libraries(salacia_tests_windowgui PRIVATE
+    Qt6::Widgets
+    salacia_exwidgets)

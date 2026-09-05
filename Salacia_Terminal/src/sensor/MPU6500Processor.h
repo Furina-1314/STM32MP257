@@ -37,6 +37,11 @@ private:
     float q2_ = 0.0F;
     float q3_ = 0.0F;
 
+    // 最近一次积分输出。100Hz 汇总经 QueuedConnection 在主线程排队处理，
+    // 相邻两帧可能落在同一毫秒（dt=0 跳帧）：此时必须原样返回上一姿态，
+    // 不得返回默认构造的 0° 状态（实机“姿态频繁闪回 0°”的根因）。
+    RovState lastOut_;
+
     // 积分反馈项
     float integralX_ = 0.0F;
     float integralY_ = 0.0F;
