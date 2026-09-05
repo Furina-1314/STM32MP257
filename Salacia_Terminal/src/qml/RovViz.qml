@@ -43,9 +43,12 @@ View3D {
     }
 
     // 舱体节点：姿态四元数直接驱动（w, x, y, z）
+    // rovViz 判空：关闭析构期模型先于视图销毁，绑定再求值时不告 TypeError
     Node {
         id: rovBody
-        rotation: Qt.quaternion(rovViz.qw, rovViz.qx, rovViz.qy, rovViz.qz)
+        rotation: rovViz
+               ? Qt.quaternion(rovViz.qw, rovViz.qx, rovViz.qy, rovViz.qz)
+               : Qt.quaternion(1, 0, 0, 0)
 
         // 主耐压舱（长方体，艏向 +X）
         Model {
@@ -117,7 +120,9 @@ View3D {
         scale: Qt.vector3d(0.3, 0.6, 0.3)
         materials: PrincipledMaterial {
             baseColor: theme.headingColor
-            emissiveness: theme.headingEmissive
+            // Qt 6.11 PrincipledMaterial 无 emissiveness；发光强度走 emissiveFactor
+            emissiveFactor: Qt.vector3d(theme.headingEmissive, theme.headingEmissive,
+                                        theme.headingEmissive)
         }
     }
 }

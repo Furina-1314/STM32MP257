@@ -1,0 +1,23 @@
+# rov_camstream.service - RTP/H264 video stream to the shore terminal (U-00).
+# Independent lifecycle from the gateway (VibePrompt section 9: video is a
+# separate subsystem sharing no control protocol). Target comes from
+# /etc/rov_gateway.ini [camstream]. Enable on demand:
+#   systemctl enable --now rov_camstream
+
+[Unit]
+Description=ROV RTP/H264 video stream (gst to shore)
+After=setup_camera.service network.target rov_gateway.service
+Wants=network.target
+# Rate limiting lives in [Unit] (systemd >= 230); in [Service] it is silently
+# ignored, which previously allowed unlimited restart hammering of the camera.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/home/root/gateway/deploy/rov_camstream.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

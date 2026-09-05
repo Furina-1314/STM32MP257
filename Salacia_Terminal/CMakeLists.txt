@@ -230,7 +230,11 @@ qt_add_executable(${PROJECT_NAME} ${PROJECT_SOURCES})
 # 翻译单元跳过静态分析；其余源文件维持 cert/misra 检查红线。
 
 # Quick3D 三维姿态场景（QML 资源；Theme.qml 集中视觉常量）
+# BASE 指向 src/qml：资源路径为 :/qml/RovViz.qml（与 MainWindow 加载的
+# qrc:/qml/RovViz.qml 一致）。不加 BASE 时 CMake 会保留 src/qml/ 相对路径，
+# 资源变成 :/qml/src/qml/RovViz.qml，QQuickWidget 找不到文件只剩背景色。
 qt_add_resources(${PROJECT_NAME} "salacia_qml"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/src/qml"
     PREFIX "/qml"
     FILES src/qml/RovViz.qml src/qml/Theme.qml)
 

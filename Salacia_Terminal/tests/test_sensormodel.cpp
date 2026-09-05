@@ -81,6 +81,7 @@ private slots:
     void staleWindow();
     void invalidNotZero();
     void attitudeFromTcp();
+    void mpuProcessorSameMsHold();
 
 private:
     void reload() { QVERIFY(loadIni(QString())); }
@@ -216,6 +217,34 @@ void TestSensorModel::invalidNotZero()
     QVERIFY(!d.tempValid);
     QVERIFY(!d.humidValid);
     QVERIFY(d.voltageValid); // 其余字段不受影响
+}
+
+void TestSensorModel::mpuProcessorSameMsHold()
+{
+    // 回归（2026-09-04 实机“姿态频繁闪回 0°”根因）：100Hz 汇总经排队连接
+    // 在主线程可能同毫秒处理两帧，processor 对 dt=0 帧必须保持上一姿态，
+    // 而不是返回默认构造的 0° 状态。
+    MPU6500Processor proc(0.5F, 0.0F);
+    RawImuSample s;
+    s.accelMps2[0] = 4.9F;  // 倾斜 ~30° 的重力分量
+    s.accelMps2[1] = 0.0F;
+    s.accelMps2[2] = 8.49F;
+    for (int i = 0; i < 3; ++i) {
+        s.gyroRadS[i] = 0.0F;
+    }
+    s.cabinTempC = 25.0F;
+    // 收敛：3 秒、10ms 步进
+    for (quint64 t = 0; t <= 10000; t += 10) {
+        s.hostTimeMs = t;
+        proc.process(s);
+    }
+    s.hostTimeMs = 10010;
+    const RovState before = proc.process(s);
+    QVERIFY(qAbs(before.pitchDeg) > 20.0F); // 已收敛到倾斜姿态（X 重力分量->俯仰）
+    s.hostTimeMs = 10010; // 同毫秒重复帧
+    const RovState held = proc.process(s);
+    QCOMPARE(held.pitchDeg, before.pitchDeg); // 保持，不闪回 0°
+    QCOMPARE(held.pitchDeg, before.pitchDeg);
 }
 
 void TestSensorModel::attitudeFromTcp()

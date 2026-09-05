@@ -85,19 +85,22 @@ VideoGLWidget::VideoGLWidget(QWidget* parent)
 
 VideoGLWidget::~VideoGLWidget()
 {
-    if (!glCleaned_) {
-        // GL 资源必须在上下文存续期间释放（先于智能指针成员析构）
+    if (!glCleaned_ && isValid() && (context() != nullptr)) {
+        // GL 资源必须在上下文存续期间释放（先于智能指针成员析构）。
+        // 进程退出路径 closeEvent 已置 glCleaned_ 并跳过全部 GL 调用。
         makeCurrent();
-        if (textureId_ != 0U) {
-            glDeleteTextures(1, &textureId_);
-            textureId_ = 0;
+        if (QOpenGLContext::currentContext() != nullptr) {
+            if (textureId_ != 0U) {
+                glDeleteTextures(1, &textureId_);
+                textureId_ = 0;
+            }
+            program_.reset();
+            lineProgram_.reset();
+            vaoQuad_.reset();
+            vaoLines_.reset();
+            vertexBuffer_.reset();
+            lineBuffer_.reset();
         }
-        program_.reset();
-        lineProgram_.reset();
-        vaoQuad_.reset();
-        vaoLines_.reset();
-        vertexBuffer_.reset();
-        lineBuffer_.reset();
         doneCurrent();
     }
 }
@@ -113,20 +116,12 @@ void VideoGLWidget::releaseGl()
     repaintTimer_->stop();
     source_ = nullptr;
 
-    // 2) 释放全部 GL 资源并排空 GPU 队列（上下文仍完全健康的窗口期）
-    makeCurrent();
-    if (textureId_ != 0U) {
-        glDeleteTextures(1, &textureId_);
-        textureId_ = 0;
-    }
-    program_.reset();
-    lineProgram_.reset();
-    vaoQuad_.reset();
-    vaoLines_.reset();
-    vertexBuffer_.reset();
-    lineBuffer_.reset();
-    glFinish(); // 等 GPU 队列清空，消除与 d3d11 拆卸的驱动层竞态
-    doneCurrent();
+    // 2) 退出路径不做任何 GL 调用（TD-8 纪律）：Quick3D 姿态场景存在时，
+    //    关闭期在 QOpenGLWidget 上 makeCurrent/删除资源会命中已失效的
+    //    上下文（实机崩溃：closeEvent→releaseGl→Qt6Gui 读空指针+0x90，
+    //    2026-09-04 双转储符号化定位）。GL 资源与上下文交给进程退出回收；
+    //    视频链路经 VideoFrameHub（CPU 快照），与 GStreamer d3d11 解码侧
+    //    无共享 GPU 资源，无需 glFinish 排空。
 }
 
 void VideoGLWidget::setSource(VideoFrameHub* hub)

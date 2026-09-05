@@ -138,6 +138,16 @@ void SensorModel::applyUdpState(const RovState& state)
 void SensorModel::refreshSoc(float voltage)
 {
     socPctCached_ = computeSoc(voltage);
+    if (!socCalibrated_) {
+        // SOC 曲线未标定：电量未知，不得以 0% 触发低电量告警
+        //（"不用 0 冒充无效值"红线；UI 侧显示"待标定"）
+        if (batteryLowActive_ || batteryCriticalActive_) {
+            batteryLowActive_ = false;
+            batteryCriticalActive_ = false;
+            emit batteryAlarm(false, false);
+        }
+        return;
+    }
     const bool low = (socPctCached_ <= batteryLowPct_);
     const bool critical = (socPctCached_ <= batteryCriticalPct_);
     if ((low != batteryLowActive_) || (critical != batteryCriticalActive_)) {
@@ -227,6 +237,9 @@ SensorDisplay SensorModel::current() const
         d.humidPct = tcpHumidPct_;
         d.voltageValid = (tcpValidMask_ & wire::kValidVoltage) != 0U;
         d.voltage = tcpVoltage_;
+        // 姿态有效性独立于汇总流到达率：MPU 位被板端摘除时角度已冻结，
+        // 必须显式提示，避免把冻结值/重启后的 0 误读为真实姿态
+        d.attitudeValid = (tcpValidMask_ & wire::kValidMpu) != 0U;
     } else if (useUdp) {
         d.source = SensorDisplay::Source::Udp;
         d.lastUpdateMs = lastUdpMs_;

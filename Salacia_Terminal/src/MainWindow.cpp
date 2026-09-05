@@ -394,8 +394,10 @@ void MainWindow::startDataFaces()
                 const char* srcText = (d.source == SensorDisplay::Source::Tcp) ? "TCP"
                         : (d.source == SensorDisplay::Source::Udp) ? "UDP" : "--";
                 sensorFreshLabel_->setText(
-                        QString::fromLocal8Bit("%1｜更新 %2s 前")
+                        QString::fromLocal8Bit("%1｜姿态%2｜更新 %3s 前")
                                 .arg(QString::fromLatin1(srcText))
+                                .arg(QString::fromLocal8Bit(
+                                        d.attitudeValid ? "有效" : "无效"))
                                 .arg(d.lastUpdateMs > 0
                                              ? (now - d.lastUpdateMs) / 1000.0
                                              : 0.0,

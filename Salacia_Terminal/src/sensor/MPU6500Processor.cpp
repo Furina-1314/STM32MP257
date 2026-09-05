@@ -65,7 +65,9 @@ RovState MPU6500Processor::process(const RawImuSample& sample)
             static_cast<qint64>(sample.hostTimeMs) - lastHostMs_;
     lastHostMs_ = static_cast<qint64>(sample.hostTimeMs);
     if (deltaMs <= 0) {
-        return out; // 时间戳异常：跳过本帧积分
+        // 同毫秒重复帧/时钟回拨：跳过积分，但返回上一姿态（默认构造的
+        // out 是 0°，返回它会以 100Hz 闪回水平姿态）
+        return lastOut_;
     }
     const float dt = clampf(static_cast<float>(deltaMs) / 1000.0F,
                             kMinDtSec, kMaxDtSec);
@@ -90,6 +92,7 @@ RovState MPU6500Processor::process(const RawImuSample& sample)
     const float cosyCosp = 1.0F - 2.0F * (q2_ * q2_ + q3_ * q3_);
     out.yawDeg = std::atan2(sinyCosp, cosyCosp) * kDegPerRad;
 
+    lastOut_ = out;
     return out;
 }
 
